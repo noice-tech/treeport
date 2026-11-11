@@ -16,7 +16,11 @@ import {
   WorktreeMutations
 } from '../infrastructure/application-runtime.ts'
 import { MutationLocks } from '../infrastructure/mutation-locks.ts'
-import { EventBusPort, PackageSystemPort } from '../infrastructure/ports.ts'
+import {
+  ConfigPort,
+  EventBusPort,
+  PackageSystemPort
+} from '../infrastructure/ports.ts'
 import { DatabasePort } from '../../database.ts'
 import { GitPort } from '../../git.ts'
 import { ProjectFolderIdentities } from './project-folder-identities.ts'
@@ -36,6 +40,68 @@ function optionalPromise<Result>(
 }
 
 export class ProjectRegistrationService {
+  /** Keeps the built-in Home space registered as a folder project at the user's home directory. */
+  registerHomeProject(): Effect.Effect<void, never, ApplicationServices> {
+    const registerFolderProject = this.registerFolderProject.bind(this)
+
+    return Effect.gen(function* () {
+      const config = yield* ConfigPort
+      const database = yield* DatabasePort
+      const events = yield* EventBusPort
+      const projectSnapshots = yield* ProjectSnapshotOperations
+
+      const { homeDir } = config
+
+      if (!homeDir) {
+        return
+      }
+
+      const homePath = yield* Effect.tryPromise(() =>
+        fs.realpath(homeDir)
+      ).pipe(Effect.orDie)
+
+      const [current] = yield* database
+        .execute('project.registration.service.home', (db) =>
+          db
+            .select({ id: projects.id, path: projects.repositoryPath })
+            .from(projects)
+            .where(eq(projects.isHome, 1))
+            .limit(1)
+        )
+        .pipe(Effect.orDie)
+
+      if (current?.path === homePath) {
+        return
+      }
+
+      const project = yield* registerFolderProject(homePath, 'Home')
+
+      yield* database
+        .execute('project.registration.service.home.mark', (db) =>
+          db.transaction(async (tx) => {
+            await tx
+              .update(projects)
+              .set({ isHome: 0 })
+              .where(eq(projects.isHome, 1))
+            await tx
+              .update(projects)
+              .set({ isHome: 1 })
+              .where(eq(projects.id, project.id))
+          })
+        )
+        .pipe(Effect.orDie)
+
+      yield* Effect.sync(() => {
+        projectSnapshots.invalidate()
+        events.publish('project.updated', { projectId: project.id })
+      })
+    }).pipe(
+      Effect.catchAll((error) =>
+        Effect.logWarning(`Home space is unavailable: ${error.message}`)
+      )
+    )
+  }
+
   registerProject(
     inputPath: string,
     requestedName?: string

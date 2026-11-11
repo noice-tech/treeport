@@ -4,6 +4,7 @@ export {
   terminalKeyboardInput,
   terminalInputWithModifiers,
   terminalDisplayTitle,
+  terminalTitleInTree,
   terminalOptions,
   terminalActivityLabel
 } from './terminal-browser'

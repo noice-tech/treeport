@@ -10,6 +10,7 @@ export const project: ProjectRecord = {
   defaultBranch: 'trunk',
   originUrl: null,
   color: null,
+  isHome: false,
   availability: { state: 'available' as const, message: null },
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',

@@ -169,6 +169,13 @@
       "when": 1793129165631,
       "tag": "0023_tree_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794397147437,
+      "tag": "0024_project_home",
+      "breakpoints": true
     }
   ]
 }

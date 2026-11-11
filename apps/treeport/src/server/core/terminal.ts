@@ -47,6 +47,7 @@ export interface TerminalAttachmentBackend {
   runtimeState(terminalId: string): Effect.Effect<
     {
       title: string | null
+      cwd: string | null
       status: HostedTerminal['status']
       activity: TerminalActivity
       attention: TerminalAttention | null
@@ -85,6 +86,11 @@ export interface TerminalSessionBackend {
   renameTerminal(
     terminalId: string,
     name: string,
+    updatedAt: string
+  ): Effect.Effect<void, unknown>
+  moveTerminal(
+    terminalId: string,
+    worktreeId: string,
     updatedAt: string
   ): Effect.Effect<void, unknown>
   listTerminals(worktreeId: string): Effect.Effect<HostedTerminal[], unknown>

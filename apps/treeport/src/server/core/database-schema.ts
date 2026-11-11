@@ -27,6 +27,7 @@ export const projects = sqliteTable(
     repositoryInode: text('repository_inode').notNull(),
     nameIsCustom: integer('name_is_custom').notNull().default(0),
     isOpen: integer('is_open').notNull().default(1),
+    isHome: integer('is_home').notNull().default(0),
     showInRecents: integer('show_in_recents').notNull().default(0),
     lastOpenedAt: text('last_opened_at').notNull(),
     createdAt: text('created_at').notNull(),
@@ -40,6 +41,10 @@ export const projects = sqliteTable(
     ),
     check('projects_name_is_custom_check', sql`${table.nameIsCustom} IN (0,1)`),
     check('projects_is_open_check', sql`${table.isOpen} IN (0,1)`),
+    check('projects_is_home_check', sql`${table.isHome} IN (0,1)`),
+    uniqueIndex('projects_home_idx')
+      .on(table.isHome)
+      .where(sql`${table.isHome} = 1`),
     check(
       'projects_show_in_recents_check',
       sql`${table.showInRecents} IN (0,1)`

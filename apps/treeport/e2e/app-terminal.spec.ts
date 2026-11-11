@@ -108,14 +108,16 @@ test.describe('desktop worktree and terminal workflows', () => {
       await expect(pending).toBeVisible()
       releaseCompletedProjects()
       await expect(
-        page.getByRole('button', { name: 'new-topic-preview', exact: true })
+        page.locator('.worktree-row:not([role=status])', {
+          hasText: 'new-topic-preview'
+        })
       ).toHaveCount(1)
       await expect(pending).toHaveCount(0)
-      await expect(
-        page.getByRole('button', {
-          name: /^(main tree|topic|new-topic-preview)$/
-        })
-      ).toHaveText(['main tree', 'topic', 'new-topic-preview'])
+      await expect(page.locator('.worktree-row')).toHaveText([
+        'main tree',
+        'topic',
+        'new-topic-preview'
+      ])
       await expect(page).toHaveURL(selectedWorkspaceUrl)
       await expect(selectedTerminal).toBeVisible()
     }

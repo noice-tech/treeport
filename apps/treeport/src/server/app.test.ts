@@ -55,6 +55,7 @@ function fixture(webDist = '/missing') {
     defaultBranch: '',
     originUrl: null,
     color: null,
+    isHome: false,
     availability: { state: 'available' as const, message: null },
     worktrees: [],
     createdAt: '2026-01-01T00:00:00.000Z',

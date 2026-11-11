@@ -4,6 +4,7 @@ import {
   ArrowPathIcon,
   CheckIcon,
   ChevronUpDownIcon,
+  HomeIcon,
   MagnifyingGlassIcon,
   PlusIcon,
   XMarkIcon
@@ -245,11 +246,14 @@ export function ProjectSwitcher({
 
   const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase()
 
+  const homeProject = projects.find((project) => project.isHome) ?? null
+
   const filteredOpenProjects = projects.filter(
     (project) =>
-      !normalizedProjectSearch ||
-      project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
-      project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch)
+      !project.isHome &&
+      (!normalizedProjectSearch ||
+        project.name.toLocaleLowerCase().includes(normalizedProjectSearch) ||
+        project.rootPath.toLocaleLowerCase().includes(normalizedProjectSearch))
   )
 
   const openProjectIds = new Set(projects.map((project) => project.id))
@@ -319,7 +323,11 @@ export function ProjectSwitcher({
             usesMacKeyboard ? '⌘⇧P' : 'Ctrl+Shift+P'
           }`}
         >
-          {activeProject ? <ProjectMark project={activeProject} /> : null}
+          {activeProject?.isHome ? (
+            <HomeIcon className="shrink-0 fill-zinc-400" aria-hidden="true" />
+          ) : activeProject ? (
+            <ProjectMark project={activeProject} />
+          ) : null}
           <span className="truncate font-semibold tracking-tight">
             {activeProject?.name ?? 'Open project'}
           </span>
@@ -623,6 +631,20 @@ export function ProjectSwitcher({
           ) : null}
         </div>
         <Separator className="bg-white/8" />
+        {homeProject ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 w-full justify-start text-[0.8125rem] font-normal min-[701px]:text-sm text-zinc-500 hover:text-zinc-100 min-[701px]:h-7"
+            onClick={() => selectOpenProject(homeProject)}
+          >
+            <HomeIcon data-icon="inline-start" /> Home
+            {activeProject?.isHome ? (
+              <CheckIcon className="shrink-0 fill-zinc-400" />
+            ) : null}
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"

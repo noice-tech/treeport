@@ -744,6 +744,22 @@ export function makeTerminalHostServer(
                   return
                 }
 
+                case 'move': {
+                  const input = yield* decodeTerminalHostInput(
+                    'move',
+                    frame.input
+                  )
+
+                  yield* options.sessions.moveTerminal(
+                    input.terminalId,
+                    input.worktreeId,
+                    input.updatedAt
+                  )
+                  yield* respond<'move'>(frame.id, null)
+
+                  return
+                }
+
                 case 'rename': {
                   const input = yield* decodeTerminalHostInput(
                     'rename',

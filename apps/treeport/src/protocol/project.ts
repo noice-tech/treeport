@@ -1,4 +1,5 @@
 import * as Schema from 'effect/Schema'
+import { terminalRecordSchema } from './terminal.ts'
 import { worktreeRecordSchema } from './worktree.ts'
 
 const nullableStringSchema = Schema.NullOr(Schema.String)
@@ -71,6 +72,8 @@ export const projectRecordSchema = Schema.mutable(
     /** Fetch URL of the repository's origin remote, when it has one. */
     originUrl: nullableStringSchema,
     color: Schema.NullOr(projectColorSchema),
+    /** The built-in Home space: a folder project at the user's home directory. */
+    isHome: Schema.Boolean,
     availability: Schema.Struct({
       state: Schema.Literal('available', 'unavailable'),
       message: nullableStringSchema
@@ -80,6 +83,16 @@ export const projectRecordSchema = Schema.mutable(
     updatedAt: Schema.String
   })
 )
+
+/** Defaults to the terminal's current folder when path is omitted. */
+export const moveTerminalToProjectSchema = Schema.Struct({
+  path: Schema.optional(Schema.String.pipe(Schema.minLength(1)))
+})
+
+export const terminalProjectResponseSchema = Schema.Struct({
+  project: projectRecordSchema,
+  terminal: terminalRecordSchema
+})
 
 const recentProjectRecordSchema = Schema.Struct({
   id: Schema.String,

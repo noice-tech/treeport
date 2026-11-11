@@ -1,12 +1,12 @@
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
-import { CrownIcon, GitBranchIcon } from 'lucide-react'
+import { GitBranchIcon } from 'lucide-react'
 import {
   ArrowUturnLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   DocumentDuplicateIcon,
   EnvelopeIcon,
-  FolderIcon,
+  FolderPlusIcon,
   LinkSlashIcon,
   PencilIcon,
   PlusIcon,
@@ -47,6 +47,7 @@ import { cn } from '../../lib/utils'
 import {
   terminalActivityLabel,
   terminalDisplayTitle,
+  terminalTitleInTree,
   terminalSessions
 } from '../../terminal-session'
 import { notifyError } from '../notifications/error-notifications'
@@ -122,9 +123,9 @@ function TreeDecorationLabel({
   return (
     <span
       className={cn(
-        'flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums',
+        'flex min-w-0 items-center gap-1 text-xs font-normal',
         decoration.icon
-          ? 'text-zinc-400'
+          ? 'text-zinc-500'
           : treeDecorationToneClasses[decoration.tone],
         className
       )}
@@ -182,10 +183,11 @@ function WorktreeShell({
   const classes = cn(
     'worktree-row flex h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-2 py-1 text-left text-[0.8125rem]/4 font-medium min-[701px]:text-sm/5 min-[701px]:min-h-8 min-[701px]:py-0.5',
     pending
-      ? 'text-zinc-300'
+      ? 'text-zinc-400'
       : selected
-        ? 'selected text-zinc-50 [&>svg]:text-accent-400 max-[700px]:bg-transparent! min-[701px]:bg-white/7! min-[701px]:active:bg-white/10!'
-        : 'text-zinc-200 hover:bg-white/5 hover:text-zinc-50',
+        ? 'selected text-zinc-50 bg-transparent!'
+        : 'text-zinc-200',
+    onClick && 'hover:bg-white/5 hover:text-zinc-50 active:bg-white/8',
     'max-[700px]:flex-1 max-[700px]:hover:bg-transparent max-[700px]:active:bg-transparent',
     (pending || busy) && 'motion-safe:animate-pulse',
     pending && 'pointer-events-none',
@@ -275,6 +277,19 @@ function WorktreeShell({
     </>
   )
 
+  if (!onClick && !pending) {
+    return (
+      <div
+        id={id}
+        className={cn(classes, 'cursor-default')}
+        title={title}
+        aria-label={ariaLabel}
+      >
+        {content}
+      </div>
+    )
+  }
+
   return (
     <SidebarMenuButton asChild isActive={selected}>
       <Button
@@ -313,6 +328,7 @@ export interface WorkspaceTreeProps {
   onRetryProjects: () => void
   onSelectTerminal: (terminal: TerminalRecord) => void
   onCloseTerminal: (terminal: TerminalRecord) => void
+  onMakeProjectFromTerminal: (terminal: TerminalRecord) => void
   onReorderTerminals: (worktree: WorktreeRecord, terminalIds: string[]) => void
   onSelectWorktree: (worktree: WorktreeRecord) => void
   onPrepareRemoval: (
@@ -345,6 +361,7 @@ export function WorkspaceTree({
   onRetryProjects,
   onSelectTerminal: selectTerminal,
   onCloseTerminal: closeTerminal,
+  onMakeProjectFromTerminal: makeProjectFromTerminal,
   onReorderTerminals: reorderTerminals,
   onSelectWorktree: selectWorktree,
   onPrepareRemoval: prepareRemoval,
@@ -609,91 +626,94 @@ export function WorkspaceTree({
                   {project.availability.message || 'Project folder unavailable'}
                 </p>
               ) : null}
-              <SidebarMenu className="gap-0.5 min-[701px]:gap-1">
+              <SidebarMenu className="gap-1.5 min-[701px]:gap-2">
                 {orderedWorktrees.get(project.id)!.map((worktree) => (
                   <SidebarMenuItem
                     key={worktree.id}
                     className={cn(
                       'group/worktree min-w-0',
+                      project.kind !== 'folder' && '-mx-1.5 px-1.5 py-1',
+                      project.kind !== 'folder' &&
+                        selectedWorktree?.id === worktree.id &&
+                        'bg-white/5',
                       project.worktrees.some(
                         (candidate) =>
                           candidate.id === worktree.originWorktreeId
                       ) && 'worktree-origin-child'
                     )}
                   >
-                    <ContextMenu>
-                      <ContextMenuTrigger asChild>
-                        <div
-                          className={cn(
-                            'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:[@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 max-[700px]:has-[button:active]:bg-white/10 max-[700px]:select-none',
-                            selectedWorktree?.id === worktree.id &&
-                              'max-[700px]:bg-white/8'
-                          )}
-                        >
-                          <WorktreeShell
-                            id={`worktree-${worktree.id}`}
-                            name={
-                              worktree.title ??
-                              worktree.pendingTitle ??
-                              worktree.name
-                            }
-                            titlePending={worktree.pendingTitle !== null}
-                            title={
-                              worktree.kind === 'folder'
-                                ? worktree.path
-                                : `${(worktree.title ?? worktree.pendingTitle) ? `${worktree.name} · ` : ''}${worktree.path}${
-                                    worktree.branch
-                                      ? ` · ${worktree.branch}`
-                                      : ` · detached at ${worktree.head.slice(
-                                          0,
-                                          8
-                                        )}`
-                                  }`
-                            }
-                            decorations={worktree.decorations}
-                            selected={selectedWorktree?.id === worktree.id}
+                    {project.kind === 'folder' ? null : (
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <div
                             className={cn(
+                              'relative min-w-0 max-[700px]:flex max-[700px]:items-center max-[700px]:gap-0.5 max-[700px]:rounded-md max-[700px]:[@media(hover:hover)_and_(pointer:fine)]:has-[button:hover]:bg-white/5 max-[700px]:has-[button:active]:bg-white/10 max-[700px]:select-none',
                               selectedWorktree?.id === worktree.id &&
-                                'min-[701px]:pr-6'
+                                'max-[700px]:bg-white/8'
                             )}
-                            busy={Boolean(pendingRemovals[worktree.id])}
-                            ariaLabel={
-                              pendingRemovals[worktree.id] === 'checking'
-                                ? `${worktree.name}, preparing removal`
-                                : pendingRemovals[worktree.id]
-                                  ? `${worktree.name}, removing`
-                                  : undefined
-                            }
-                            onClick={() => selectWorktree(worktree)}
-                            onOpenDecoration={(url) =>
-                              onOpenBrowserUrl(project, worktree, url)
-                            }
-                            icon={
-                              pendingRemovals[worktree.id] ? (
-                                <GitBranchIcon
-                                  className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
-                                  aria-hidden="true"
-                                />
-                              ) : worktree.kind === 'folder' ? (
-                                <FolderIcon
-                                  className="size-4 shrink-0 text-zinc-600 min-[701px]:size-3.5!"
-                                  aria-hidden="true"
-                                />
-                              ) : worktree.kind === 'main' ? (
-                                <CrownIcon
-                                  className="size-4 shrink-0 stroke-[1.5] text-zinc-600 min-[701px]:size-3.5!"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <GitBranchIcon
-                                  className="shrink-0 stroke-[1.5] text-zinc-600 min-[701px]:size-3.5!"
-                                  aria-hidden="true"
-                                />
-                              )
-                            }
-                          />
-                          {selectedWorktree?.id === worktree.id ? (
-                            <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center max-[700px]:static max-[700px]:shrink-0">
+                          >
+                            <WorktreeShell
+                              id={`worktree-${worktree.id}`}
+                              name={
+                                worktree.title ??
+                                worktree.pendingTitle ??
+                                worktree.name
+                              }
+                              titlePending={worktree.pendingTitle !== null}
+                              title={
+                                worktree.kind === 'folder'
+                                  ? worktree.path
+                                  : `${(worktree.title ?? worktree.pendingTitle) ? `${worktree.name} · ` : ''}${worktree.path}${
+                                      worktree.branch
+                                        ? ` · ${worktree.branch}`
+                                        : ` · detached at ${worktree.head.slice(
+                                            0,
+                                            8
+                                          )}`
+                                    }`
+                              }
+                              decorations={worktree.decorations}
+                              selected={selectedWorktree?.id === worktree.id}
+                              className="min-[701px]:pr-7"
+                              busy={Boolean(pendingRemovals[worktree.id])}
+                              ariaLabel={
+                                pendingRemovals[worktree.id] === 'checking'
+                                  ? `${worktree.name}, preparing removal`
+                                  : pendingRemovals[worktree.id]
+                                    ? `${worktree.name}, removing`
+                                    : undefined
+                              }
+                              onOpenDecoration={(url) =>
+                                onOpenBrowserUrl(project, worktree, url)
+                              }
+                              icon={
+                                pendingRemovals[worktree.id] ? (
+                                  <GitBranchIcon
+                                    className="worktree-progress-icon worktree-removing-icon size-4 shrink-0 stroke-rose-400 stroke-[1.5] min-[701px]:size-3.5!"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.75"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    className={cn(
+                                      'size-4 shrink-0 min-[701px]:size-3.5!',
+                                      selectedWorktree?.id === worktree.id
+                                        ? 'text-zinc-300'
+                                        : 'text-zinc-500'
+                                    )}
+                                    aria-hidden="true"
+                                  >
+                                    <path d="M12 3v18M12 7 8.5 9.5M12 7l3.5 2.5M12 11.5l-5 3.5M12 11.5l5 3.5M12 16l-6.5 4M12 16l6.5 4" />
+                                  </svg>
+                                )
+                              }
+                            />
+                            <div className="worktree-actions absolute inset-y-0 right-0 z-10 flex items-center opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100 max-[700px]:static max-[700px]:shrink-0 max-[700px]:opacity-100">
                               <SidebarAction
                                 label={`New app in ${worktree.name}`}
                                 tooltip={`New app in ${worktree.name} — ${
@@ -710,110 +730,118 @@ export function WorkspaceTree({
                                 <PlusIcon />
                               </SidebarAction>
                             </div>
-                          ) : null}
-                        </div>
-                      </ContextMenuTrigger>
-                      <ContextMenuContent className="max-w-[min(20rem,var(--radix-context-menu-content-available-width))]">
-                        <ContextMenuGroup>
-                          <ContextMenuItem
-                            onSelect={() => setTitleWorktree(worktree)}
-                          >
-                            <PencilIcon />
-                            Edit title…
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            onSelect={() => copyText(worktree.id)}
-                          >
-                            <DocumentDuplicateIcon />
-                            Copy tree ID
-                          </ContextMenuItem>
-                          {project.worktrees.some(
-                            (candidate) =>
-                              candidate.id === worktree.originWorktreeId
-                          ) ? (
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className="max-w-[min(20rem,var(--radix-context-menu-content-available-width))]">
+                          <ContextMenuGroup>
                             <ContextMenuItem
-                              onSelect={() =>
-                                selectWorktree(
-                                  project.worktrees.find(
-                                    (candidate) =>
-                                      candidate.id === worktree.originWorktreeId
-                                  )!
-                                )
-                              }
+                              onSelect={() => setTitleWorktree(worktree)}
                             >
-                              <ArrowUturnLeftIcon />
-                              Go to origin tree
+                              <PencilIcon />
+                              Edit title…
                             </ContextMenuItem>
-                          ) : null}
-                        </ContextMenuGroup>
-                        {worktree.decorations.length &&
-                        globalThis.matchMedia?.('(pointer: coarse)').matches ? (
-                          <>
-                            <ContextMenuSeparator />
-                            <ContextMenuGroup>
-                              {sortTreeDecorations(worktree.decorations).map(
-                                (decoration) => (
-                                  <ContextMenuItem
-                                    key={decoration.key}
-                                    disabled={!decoration.url}
-                                    className="data-[disabled]:opacity-100"
-                                    onSelect={() =>
-                                      onOpenBrowserUrl(
-                                        project,
-                                        worktree,
-                                        decoration.url!
-                                      )
-                                    }
-                                  >
-                                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                      <TreeDecorationLabel
-                                        decoration={decoration}
-                                        className="text-sm"
-                                      />
-                                      <span className="line-clamp-2 text-[0.8125rem]/4.5 text-zinc-400 wrap-anywhere">
-                                        {decoration.title}
-                                      </span>
-                                    </span>
-                                  </ContextMenuItem>
-                                )
-                              )}
-                            </ContextMenuGroup>
-                          </>
-                        ) : null}
-                        {worktree.kind === 'linked' ? (
-                          <>
-                            <ContextMenuSeparator />
-                            <ContextMenuGroup>
+                            <ContextMenuItem
+                              onSelect={() => copyText(worktree.id)}
+                            >
+                              <DocumentDuplicateIcon />
+                              Copy tree ID
+                            </ContextMenuItem>
+                            {project.worktrees.some(
+                              (candidate) =>
+                                candidate.id === worktree.originWorktreeId
+                            ) ? (
                               <ContextMenuItem
-                                variant="destructive"
-                                disabled={
-                                  project.availability.state ===
-                                    'unavailable' ||
-                                  Boolean(pendingRemovals[worktree.id])
-                                }
-                                onSelect={() => {
-                                  void prepareRemoval(
-                                    worktree,
-                                    document.getElementById(
-                                      `worktree-${worktree.id}`
+                                onSelect={() =>
+                                  selectWorktree(
+                                    project.worktrees.find(
+                                      (candidate) =>
+                                        candidate.id ===
+                                        worktree.originWorktreeId
                                     )!
                                   )
-                                }}
+                                }
                               >
-                                <TrashIcon />
-                                {project.availability.state === 'unavailable'
-                                  ? 'Git repository unavailable'
-                                  : pendingRemovals[worktree.id]
-                                    ? 'Preparing removal…'
-                                    : 'Remove tree…'}
+                                <ArrowUturnLeftIcon />
+                                Go to origin tree
                               </ContextMenuItem>
-                            </ContextMenuGroup>
-                          </>
-                        ) : null}
-                      </ContextMenuContent>
-                    </ContextMenu>
+                            ) : null}
+                          </ContextMenuGroup>
+                          {worktree.decorations.length &&
+                          globalThis.matchMedia?.('(pointer: coarse)')
+                            .matches ? (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuGroup>
+                                {sortTreeDecorations(worktree.decorations).map(
+                                  (decoration) => (
+                                    <ContextMenuItem
+                                      key={decoration.key}
+                                      disabled={!decoration.url}
+                                      className="data-[disabled]:opacity-100"
+                                      onSelect={() =>
+                                        onOpenBrowserUrl(
+                                          project,
+                                          worktree,
+                                          decoration.url!
+                                        )
+                                      }
+                                    >
+                                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                        <TreeDecorationLabel
+                                          decoration={decoration}
+                                          className="text-sm"
+                                        />
+                                        <span className="line-clamp-2 text-[0.8125rem]/4.5 text-zinc-400 wrap-anywhere">
+                                          {decoration.title}
+                                        </span>
+                                      </span>
+                                    </ContextMenuItem>
+                                  )
+                                )}
+                              </ContextMenuGroup>
+                            </>
+                          ) : null}
+                          {worktree.kind === 'linked' ? (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuGroup>
+                                <ContextMenuItem
+                                  variant="destructive"
+                                  disabled={
+                                    project.availability.state ===
+                                      'unavailable' ||
+                                    Boolean(pendingRemovals[worktree.id])
+                                  }
+                                  onSelect={() => {
+                                    void prepareRemoval(
+                                      worktree,
+                                      document.getElementById(
+                                        `worktree-${worktree.id}`
+                                      )!
+                                    )
+                                  }}
+                                >
+                                  <TrashIcon />
+                                  {project.availability.state === 'unavailable'
+                                    ? 'Git repository unavailable'
+                                    : pendingRemovals[worktree.id]
+                                      ? 'Preparing removal…'
+                                      : 'Remove tree…'}
+                                </ContextMenuItem>
+                              </ContextMenuGroup>
+                            </>
+                          ) : null}
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    )}
                     <SidebarMenuSub
-                      className="terminal-list mr-0 ml-2.5 gap-px border-white/6 pr-0 pl-1.5 min-[701px]:ml-2.5 min-[701px]:gap-px"
+                      className={cn(
+                        cn(
+                          'terminal-list mx-0 gap-px border-l-0 px-0 min-[701px]:gap-px',
+                          project.kind !== 'folder' &&
+                            'ml-[1.375rem] min-[701px]:ml-5'
+                        )
+                      )}
                       aria-label={`${worktree.name} terminal tabs`}
                     >
                       <ReorderableItems
@@ -839,9 +867,12 @@ export function WorkspaceTree({
                         onDragCancel={() => terminalLayoutDrag.cancel()}
                       >
                         {(terminal, itemProps, handleProps) => {
-                          const title = terminalDisplayTitle(
-                            runtimeTitles.get(terminal.id),
-                            terminal.name
+                          const title = terminalTitleInTree(
+                            terminalDisplayTitle(
+                              runtimeTitles.get(terminal.id),
+                              terminal.name
+                            ),
+                            worktree.path
                           )
 
                           const attention =
@@ -927,12 +958,12 @@ export function WorkspaceTree({
                                       variant="ghost"
                                       type="button"
                                       className={cn(
-                                        'terminal-row grid h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_2rem] gap-1 rounded-md px-2 py-1 text-left text-xs/4 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1 min-[701px]:py-0 min-[701px]:text-xs/4',
+                                        'terminal-row grid h-auto min-h-8 max-[700px]:h-auto w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_2rem] gap-1.5 rounded-md px-2 py-1 text-left text-[0.8125rem]/4 font-normal min-[701px]:min-h-7 min-[701px]:grid-cols-[1rem_minmax(0,1fr)_1.75rem] min-[701px]:gap-1.5 min-[701px]:py-0 min-[701px]:text-[0.8125rem]/4',
                                         childCount > 0 &&
                                           'grid-cols-[1rem_minmax(0,1fr)_4.25rem] min-[701px]:grid-cols-[1rem_minmax(0,1fr)_3.75rem]',
                                         selectedTerminalId === terminal.id
-                                          ? 'selected bg-accent-400/8! text-accent-50 active:bg-accent-400/14!'
-                                          : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
+                                          ? 'selected bg-accent-400/12! text-accent-50 active:bg-accent-400/18!'
+                                          : 'text-zinc-400 hover:bg-white/3 hover:text-zinc-200'
                                       )}
                                       onClick={() => selectTerminal(terminal)}
                                       onMouseDown={(event) => {
@@ -973,13 +1004,15 @@ export function WorkspaceTree({
                                       <span
                                         className={cn(
                                           'truncate',
+                                          /^[~/]/u.test(title) &&
+                                            '[direction:rtl] text-left',
                                           working && 'text-accent-300',
                                           attention &&
                                             terminalAttentionColor(attention)
                                         )}
                                         aria-hidden="true"
                                       >
-                                        {title}
+                                        <bdi dir="ltr">{title}</bdi>
                                       </span>
                                       <span aria-hidden="true" />
                                     </Button>
@@ -1066,6 +1099,16 @@ export function WorkspaceTree({
                                         Mark as unread
                                       </ContextMenuItem>
                                     ) : null}
+                                    {project.isHome ? (
+                                      <ContextMenuItem
+                                        onSelect={() =>
+                                          makeProjectFromTerminal(terminal)
+                                        }
+                                      >
+                                        <FolderPlusIcon />
+                                        Make project from this folder
+                                      </ContextMenuItem>
+                                    ) : null}
                                     <ContextMenuItem
                                       onSelect={() => copyText(terminal.id)}
                                     >
@@ -1090,9 +1133,36 @@ export function WorkspaceTree({
                         }}
                       </ReorderableItems>
                     </SidebarMenuSub>
+                    {project.kind === 'folder' || !worktree.terminals.length ? (
+                      <SidebarMenuButton asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={cn(
+                            'h-auto min-h-8 max-[700px]:h-auto w-full justify-start gap-1 px-2 py-1 text-[0.8125rem]/4 font-normal min-[701px]:text-sm/5 text-zinc-500 hover:bg-white/5 hover:text-zinc-100 min-[701px]:min-h-8 min-[701px]:py-0.5',
+                            project.kind !== 'folder' &&
+                              'ml-[1.375rem] w-[calc(100%-1.375rem)] min-[701px]:ml-5 min-[701px]:w-[calc(100%-1.25rem)] min-[701px]:min-h-7 min-[701px]:text-[0.8125rem]/4'
+                          )}
+                          aria-keyshortcuts={
+                            usesMacKeyboard ? 'Meta+P' : 'Control+P'
+                          }
+                          title={`New app — ${usesMacKeyboard ? '⌘P' : 'Ctrl+P'}`}
+                          onClick={(event) =>
+                            onOpenAppDialog(
+                              project,
+                              worktree,
+                              event.currentTarget
+                            )
+                          }
+                        >
+                          <PlusIcon className="min-[701px]:size-3.5!" />
+                          <span>New app</span>
+                        </Button>
+                      </SidebarMenuButton>
+                    ) : null}
                   </SidebarMenuItem>
                 ))}
-                {!selectedWorktree ? (
+                {!selectedWorktree && project.kind !== 'folder' ? (
                   <SidebarMenuItem className="min-w-0">
                     <SidebarMenuButton asChild>
                       <Button

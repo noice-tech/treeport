@@ -2141,6 +2141,7 @@ export class TerminalHostSessions {
 
   runtimeState(terminalId: string): Effect.Effect<{
     title: string | null
+    cwd: string | null
     status: HostedTerminal['status']
     activity: TerminalActivity
     attention: TerminalAttention | null
@@ -2150,6 +2151,9 @@ export class TerminalHostSessions {
         session
           ? {
               title: titleState(session).title,
+              cwd:
+                session.pwd?.replace(/^~(?=\/|$)/u, os.homedir()) ??
+                session.cwd,
               status: session.status,
               activity: session.activity,
               attention: session.attention
@@ -2749,6 +2753,47 @@ export class TerminalHostSessions {
 
       return content.slice(-lines).join('\n')
     })
+  }
+
+  moveTerminal(
+    terminalId: string,
+    worktreeId: string,
+    updatedAt: string
+  ): Effect.Effect<void> {
+    return this.session(terminalId).pipe(
+      Effect.tap((session) =>
+        Effect.gen(function* () {
+          if (!session) {
+            return
+          }
+
+          if (session.pty instanceof PersistentSession) {
+            const owner = session.pty
+
+            const { input } = yield* decodeTerminalEngineMetadata(
+              owner.manifest.metadata
+            ).pipe(Effect.orDie)
+
+            const metadata = JSON.stringify({
+              ...input,
+              engineVersion: 1,
+              worktreeId,
+              launchSpecPath: session.specPath,
+              updatedAt
+            })
+
+            yield* nodePromise(() => owner.setMetadata(metadata)).pipe(
+              Effect.orDie
+            )
+            owner.manifest.metadata = metadata
+          }
+
+          session.worktreeId = worktreeId
+          session.updatedAt = updatedAt
+        })
+      ),
+      Effect.asVoid
+    )
   }
 
   renameTerminal(

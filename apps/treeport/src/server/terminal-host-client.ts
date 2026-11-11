@@ -610,6 +610,12 @@ export class TerminalHostClient
     return this.request('input', { terminalId, steps })
   }
 
+  moveTerminal(terminalId: string, worktreeId: string, updatedAt: string) {
+    return this.request('move', { terminalId, worktreeId, updatedAt }).pipe(
+      Effect.asVoid
+    )
+  }
+
   renameTerminal(terminalId: string, name: string, updatedAt: string) {
     return this.request('rename', { terminalId, name, updatedAt }).pipe(
       Effect.asVoid

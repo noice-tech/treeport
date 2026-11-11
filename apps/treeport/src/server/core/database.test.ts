@@ -58,6 +58,8 @@ async function restoreVersion7WorktreeSchema(
     ON worktrees(tmux_socket_name)
   `)
   await database.db.run(sql`ALTER TABLE projects DROP COLUMN origin_url`)
+  await database.db.run(sql`DROP INDEX projects_home_idx`)
+  await database.db.run(sql`ALTER TABLE projects DROP COLUMN is_home`)
   await database.db.run(sql`ALTER TABLE web_apps RENAME TO web_panels`)
   await database.db.run(sql`ALTER TABLE browser_apps RENAME TO browser_panels`)
   await database.db.run(sql`

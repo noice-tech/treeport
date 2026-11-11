@@ -49,7 +49,7 @@ export function TerminalStatusIcon({
         ? 'text-status-error'
         : working
           ? 'text-accent-400'
-          : 'text-zinc-500'
+          : 'text-zinc-400'
 
   return (
     <span

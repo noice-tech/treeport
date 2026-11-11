@@ -21,6 +21,7 @@ export interface AppConfig {
   webDist?: string
   webDevelopment: boolean
   defaultPackages?: string[]
+  homeDir?: string
 }
 
 function expandHome(value: string): string {
@@ -99,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       import.meta.resolve('@treeport/vscode/package.json'),
       import.meta.resolve('@treeport/github/package.json')
     ].map((manifest) => path.dirname(fileURLToPath(manifest))),
+    homeDir: os.homedir(),
     host,
     port: portValue,
     dataDir,
