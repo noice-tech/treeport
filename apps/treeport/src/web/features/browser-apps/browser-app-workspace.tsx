@@ -1,14 +1,14 @@
-import type { DesktopBrowserPermissionPrompt } from "@treeport/desktop-bridge";
-import { z } from "zod";
+import type { DesktopBrowserPermissionPrompt } from '@treeport/desktop-bridge'
+import { z } from 'zod'
 import {
   useEffect,
   useEffectEvent,
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent,
-} from "react";
-import { traceBrowserOpen } from "../../browser-open-tracing";
+  type KeyboardEvent
+} from 'react'
+import { traceBrowserOpen } from '../../browser-open-tracing'
 import {
   ArrowLeftIcon,
   ArrowPathIcon,
@@ -24,129 +24,129 @@ import {
   ShieldExclamationIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+  XMarkIcon
+} from '@heroicons/react/16/solid'
 import type {
   BrowserApp,
   BrowserContextResult,
   BrowserContextAction,
   BrowserServerMessage,
-  BrowserSessionState,
-} from "#protocol/browser";
-import type { BrowserClipboard } from "@treeport/browser-host/clipboard";
+  BrowserSessionState
+} from '#protocol/browser'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 import {
   browserUrlSchema,
-  browserObservedUrlSchema,
-} from "@treeport/browser-host";
+  browserObservedUrlSchema
+} from '@treeport/browser-host'
 import {
   BROWSER_MAX_INSERT_TEXT_LENGTH,
-  browserControllerDescription,
-} from "#protocol/browser";
-import { decodeUnknownOrNull } from "#protocol/schema";
-import { cn } from "../../lib/utils";
-import { Button } from "../../components/ui/button";
+  browserControllerDescription
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { cn } from '../../lib/utils'
+import { Button } from '../../components/ui/button'
 import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
-  ContextMenuSeparator,
-} from "../../components/ui/context-menu";
-import { Input } from "../../components/ui/input";
-import { NativeSelect } from "../../components/ui/native-select";
+  ContextMenuSeparator
+} from '../../components/ui/context-menu'
+import { Input } from '../../components/ui/input'
+import { NativeSelect } from '../../components/ui/native-select'
 import {
   Popover,
   PopoverContent,
-  PopoverTrigger,
-} from "../../components/ui/popover";
-import type { BrowserAppConnection } from "../../browser-session-client";
-import { getDesktopRuntime } from "../../desktop-runtime";
-import { writeBrowserClipboard } from "../../browser-clipboard";
+  PopoverTrigger
+} from '../../components/ui/popover'
+import type { BrowserAppConnection } from '../../browser-session-client'
+import { getDesktopRuntime } from '../../desktop-runtime'
+import { writeBrowserClipboard } from '../../browser-clipboard'
 import {
   connectRemoteBrowser,
-  type RemoteBrowserConnection,
-} from "../../browser-remote-connection";
-import { LocalBrowserWebview } from "./local-browser-webview";
-import { BrowserStreamDiagnostics } from "./browser-stream-diagnostics";
-import { BrowserFilePicker } from "./browser-file-picker";
-import { BrowserPageDialog } from "./browser-page-dialog";
-import { BrowserSelectPicker } from "./browser-select-picker";
-import { useProjectSwitcherOpen } from "../sidebar/workspace-shell";
-import { isApplePlatform } from "../../lib/platform";
+  type RemoteBrowserConnection
+} from '../../browser-remote-connection'
+import { LocalBrowserWebview } from './local-browser-webview'
+import { BrowserStreamDiagnostics } from './browser-stream-diagnostics'
+import { BrowserFilePicker } from './browser-file-picker'
+import { BrowserPageDialog } from './browser-page-dialog'
+import { BrowserSelectPicker } from './browser-select-picker'
+import { useProjectSwitcherOpen } from '../sidebar/workspace-shell'
+import { isApplePlatform } from '../../lib/platform'
 
 const viewportPresetSchema = z.enum([
-  "responsive",
-  "phone",
-  "tablet",
-  "desktop",
-]);
+  'responsive',
+  'phone',
+  'tablet',
+  'desktop'
+])
 
 const viewportSettingsSchema = z.object({
   viewport: z
     .object({
       width: z.number().int().min(1).max(3840),
-      height: z.number().int().min(1).max(2160),
+      height: z.number().int().min(1).max(2160)
     })
     .nullable(),
-  preset: viewportPresetSchema,
-});
+  preset: viewportPresetSchema
+})
 
 function readStoredViewportSettings(
-  appId: string,
+  appId: string
 ): z.infer<typeof viewportSettingsSchema> {
   try {
-    const stored = sessionStorage.getItem(`treeport-browser-viewport:${appId}`);
+    const stored = sessionStorage.getItem(`treeport-browser-viewport:${appId}`)
 
     const parsed = viewportSettingsSchema.safeParse(
-      stored ? JSON.parse(stored) : null,
-    );
+      stored ? JSON.parse(stored) : null
+    )
 
     if (parsed.success) {
-      return parsed.data;
+      return parsed.data
     }
   } catch {}
 
-  return { viewport: null, preset: "responsive" };
+  return { viewport: null, preset: 'responsive' }
 }
 
 function parseBrowserAddress(value: string): URL | null {
-  const input = value.trim();
+  const input = value.trim()
 
   if (!input) {
-    return null;
+    return null
   }
 
-  const hasProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(input);
-  const candidate = hasProtocol ? input : `http://${input}`;
-  const parsed = decodeUnknownOrNull(browserUrlSchema, candidate);
+  const hasProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
+  const candidate = hasProtocol ? input : `http://${input}`
+  const parsed = decodeUnknownOrNull(browserUrlSchema, candidate)
 
   if (parsed !== null) {
-    const url = new URL(parsed);
+    const url = new URL(parsed)
 
     if (
       hasProtocol ||
-      url.hostname === "localhost" ||
-      url.hostname.includes(".") ||
-      url.hostname.includes(":") ||
+      url.hostname === 'localhost' ||
+      url.hostname.includes('.') ||
+      url.hostname.includes(':') ||
       url.port
     ) {
-      return url;
+      return url
     }
   }
 
-  const candidateUrl = URL.canParse(candidate) ? new URL(candidate) : null;
+  const candidateUrl = URL.canParse(candidate) ? new URL(candidate) : null
 
   if (hasProtocol || candidateUrl?.username || candidateUrl?.password) {
-    return null;
+    return null
   }
 
-  const search = new URL("https://www.google.com/search");
-  search.searchParams.set("q", input);
+  const search = new URL('https://www.google.com/search')
+  search.searchParams.set('q', input)
 
   return decodeUnknownOrNull(browserUrlSchema, search.href) !== null
     ? search
-    : null;
+    : null
 }
 
 export function BrowserAppWorkspace({
@@ -157,491 +157,491 @@ export function BrowserAppWorkspace({
   permissionPrompt,
   onLoadingChange,
   onFaviconChange,
-  onFocusSurface,
+  onFocusSurface
 }: {
-  app: BrowserApp;
-  active: boolean;
-  autoFocusBlocked: boolean;
-  inputBlocked: boolean;
-  permissionPrompt: DesktopBrowserPermissionPrompt | null;
-  onLoadingChange: (appId: string, loading: boolean) => void;
-  onFaviconChange: (appId: string, faviconUrl: string | null) => void;
-  onFocusSurface: () => void;
+  app: BrowserApp
+  active: boolean
+  autoFocusBlocked: boolean
+  inputBlocked: boolean
+  permissionPrompt: DesktopBrowserPermissionPrompt | null
+  onLoadingChange: (appId: string, loading: boolean) => void
+  onFaviconChange: (appId: string, faviconUrl: string | null) => void
+  onFocusSurface: () => void
 }) {
-  const projectSwitcherOpen = useProjectSwitcherOpen();
-  const autoFocusBlocked = workspaceAutoFocusBlocked || projectSwitcherOpen;
-  const inputBlocked = workspaceInputBlocked || projectSwitcherOpen;
-  const sectionRef = useRef<HTMLElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasHostRef = useRef<HTMLDivElement>(null);
-  const remoteConnectionRef = useRef<RemoteBrowserConnection | null>(null);
-  const viewportAreaRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const findInputRef = useRef<HTMLInputElement>(null);
-  const connectionRef = useRef<BrowserAppConnection | null>(null);
+  const projectSwitcherOpen = useProjectSwitcherOpen()
+  const autoFocusBlocked = workspaceAutoFocusBlocked || projectSwitcherOpen
+  const inputBlocked = workspaceInputBlocked || projectSwitcherOpen
+  const sectionRef = useRef<HTMLElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasHostRef = useRef<HTMLDivElement>(null)
+  const remoteConnectionRef = useRef<RemoteBrowserConnection | null>(null)
+  const viewportAreaRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const findInputRef = useRef<HTMLInputElement>(null)
+  const connectionRef = useRef<BrowserAppConnection | null>(null)
 
   const [connection, setConnection] = useState<BrowserAppConnection | null>(
-    null,
-  );
+    null
+  )
 
   const pendingCopiesRef = useRef(
     new Map<
       string,
       {
-        resolve(clipboard: BrowserClipboard | null): void;
-        reject(reason: Error): void;
+        resolve(clipboard: BrowserClipboard | null): void
+        reject(reason: Error): void
       }
-    >(),
-  );
+    >()
+  )
 
-  const stateRef = useRef<BrowserSessionState | null>(null);
-  const viewportRef = useRef({ width: 1_280, height: 800 });
+  const stateRef = useRef<BrowserSessionState | null>(null)
+  const viewportRef = useRef({ width: 1_280, height: 800 })
 
   const viewportDragRef = useRef<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    scale: number;
-  } | null>(null);
+    x: number
+    y: number
+    width: number
+    height: number
+    scale: number
+  } | null>(null)
 
-  const contextRequestRef = useRef<string | null>(null);
-  const contextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const contextRef = useRef<BrowserContextResult | null>(null);
+  const contextRequestRef = useRef<string | null>(null)
+  const contextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const contextRef = useRef<BrowserContextResult | null>(null)
 
   const contextActionRef = useRef<{
-    requestId: string;
-    resolveCopy: ((value: Blob) => void) | null;
-    rejectCopy: ((reason: Error) => void) | null;
-    timeout: ReturnType<typeof setTimeout> | null;
-  } | null>(null);
+    requestId: string
+    resolveCopy: ((value: Blob) => void) | null
+    rejectCopy: ((reason: Error) => void) | null
+    timeout: ReturnType<typeof setTimeout> | null
+  } | null>(null)
 
   const [contextMenu, setContextMenu] = useState<BrowserContextResult | null>(
-    null,
-  );
+    null
+  )
 
-  const pointerActiveRef = useRef(false);
-  const pointerTypeRef = useRef("mouse");
+  const pointerActiveRef = useRef(false)
+  const pointerTypeRef = useRef('mouse')
 
   const touchesRef = useRef(
-    new Map<number, { id: number; x: number; y: number }>(),
-  );
+    new Map<number, { id: number; x: number; y: number }>()
+  )
 
-  const addressPointerSelectAllRef = useRef(false);
-  const addressDirtyRef = useRef(false);
-  const autoFocusAddressRef = useRef(app.url === "about:blank");
+  const addressPointerSelectAllRef = useRef(false)
+  const addressDirtyRef = useRef(false)
+  const autoFocusAddressRef = useRef(app.url === 'about:blank')
 
   const pendingNavigationRef = useRef<{
-    startUrl: string;
-    targetUrl: string;
-  } | null>(null);
+    startUrl: string
+    targetUrl: string
+  } | null>(null)
 
   const [streamStatus, setStreamStatus] = useState<string | null>(
-    "Connecting to remote browser…",
-  );
+    'Connecting to remote browser…'
+  )
 
   const [fileChooser, setFileChooser] = useState<Extract<
     BrowserServerMessage,
-    { type: "fileChooser" }
-  > | null>(null);
+    { type: 'fileChooser' }
+  > | null>(null)
 
   const [pageDialog, setPageDialog] = useState<Extract<
     BrowserServerMessage,
-    { type: "dialog" }
-  > | null>(null);
+    { type: 'dialog' }
+  > | null>(null)
 
   const [pageSelect, setPageSelect] = useState<{
-    request: Extract<BrowserServerMessage, { type: "select" }>;
-    anchor: { left: number; top: number; width: number; height: number };
-  } | null>(null);
+    request: Extract<BrowserServerMessage, { type: 'select' }>
+    anchor: { left: number; top: number; width: number; height: number }
+  } | null>(null)
 
-  const [connectionRevision, setConnectionRevision] = useState(0);
-  const [addressFocusRevision, setAddressFocusRevision] = useState(0);
+  const [connectionRevision, setConnectionRevision] = useState(0)
+  const [addressFocusRevision, setAddressFocusRevision] = useState(0)
 
   const [localBrowserPaintRetained, setLocalBrowserPaintRetained] =
-    useState(false);
+    useState(false)
 
-  const [state, setState] = useState<BrowserSessionState | null>(null);
+  const [state, setState] = useState<BrowserSessionState | null>(null)
 
   const [inputValue, setInputValue] = useState(
-    app.url === "about:blank" ? "" : app.url,
-  );
+    app.url === 'about:blank' ? '' : app.url
+  )
 
-  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false)
 
   const [permissionSettings, setPermissionSettings] = useState<{
-    origin: string | null;
-    decisions: Array<{ capability: string; label: string; allowed: boolean }>;
-  } | null>(null);
+    origin: string | null
+    decisions: Array<{ capability: string; label: string; allowed: boolean }>
+  } | null>(null)
 
-  const [permissionSettingsBusy, setPermissionSettingsBusy] = useState(false);
+  const [permissionSettingsBusy, setPermissionSettingsBusy] = useState(false)
 
   const [permissionSettingsError, setPermissionSettingsError] = useState<
     string | null
-  >(null);
+  >(null)
 
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [audioMuted, setAudioMuted] = useState(false);
-  const audioMutedRef = useRef(audioMuted);
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [audioMuted, setAudioMuted] = useState(false)
+  const audioMutedRef = useRef(audioMuted)
 
   const [
     { viewport: viewportOverride, preset: viewportPreset },
-    setViewportSettings,
-  ] = useState(() => readStoredViewportSettings(app.id));
+    setViewportSettings
+  ] = useState(() => readStoredViewportSettings(app.id))
 
-  const viewportOverrideRef = useRef(viewportOverride);
-  const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 });
+  const viewportOverrideRef = useRef(viewportOverride)
+  const [viewportSpace, setViewportSpace] = useState({ width: 0, height: 0 })
 
   const [viewportWidth, setViewportWidth] = useState(
-    String(viewportOverride?.width ?? 390),
-  );
+    String(viewportOverride?.width ?? 390)
+  )
 
   const [viewportHeight, setViewportHeight] = useState(
-    String(viewportOverride?.height ?? 844),
-  );
+    String(viewportOverride?.height ?? 844)
+  )
 
-  const [findOpen, setFindOpen] = useState(false);
-  const [findValue, setFindValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false)
+  const [findValue, setFindValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   const [clipboardToCopy, setClipboardToCopy] =
-    useState<BrowserClipboard | null>(null);
+    useState<BrowserClipboard | null>(null)
 
   const [failure, setFailure] = useState<{
-    message: string;
-    setup: { installCommand: string | null } | null;
-  } | null>(null);
+    message: string
+    setup: { installCommand: string | null } | null
+  } | null>(null)
 
-  const [installCommandCopied, setInstallCommandCopied] = useState(false);
+  const [installCommandCopied, setInstallCommandCopied] = useState(false)
 
-  const { localBrowser, computerId } = getDesktopRuntime();
+  const { localBrowser, computerId } = getDesktopRuntime()
 
   useEffect(() => {
     if (!permissionsOpen || !localBrowser) {
-      return;
+      return
     }
 
-    let current = true;
+    let current = true
     void window.treeportDesktop
       ?.browserPermissions?.(app.id)
       .then((settings) => {
         if (current) {
-          setPermissionSettings(settings);
+          setPermissionSettings(settings)
         }
       })
       .catch(() => {
         if (current) {
-          setPermissionSettingsError("Could not load website permissions.");
+          setPermissionSettingsError('Could not load website permissions.')
         }
-      });
+      })
 
     return () => {
-      current = false;
-    };
-  }, [localBrowser, app.id, permissionsOpen, state?.url]);
+      current = false
+    }
+  }, [localBrowser, app.id, permissionsOpen, state?.url])
 
   const resetPermissions = async (
     origin: string | null,
-    capability: string | null,
+    capability: string | null
   ) => {
     if (!origin) {
-      return;
+      return
     }
 
-    setPermissionSettingsBusy(true);
-    setPermissionSettingsError(null);
+    setPermissionSettingsBusy(true)
+    setPermissionSettingsError(null)
 
-    const bridge = window.treeportDesktop;
+    const bridge = window.treeportDesktop
 
     const failure = await Promise.resolve(
-      bridge?.resetBrowserPermissions?.(app.id, origin, capability),
+      bridge?.resetBrowserPermissions?.(app.id, origin, capability)
     )
       .then(async (reset) => {
         if (!bridge || !reset) {
-          return "Could not reset website permissions. The page may have navigated.";
+          return 'Could not reset website permissions. The page may have navigated.'
         }
 
         setPermissionSettings(
-          (await bridge.browserPermissions?.(app.id)) ?? null,
-        );
+          (await bridge.browserPermissions?.(app.id)) ?? null
+        )
 
-        return null;
+        return null
       })
-      .catch(() => "Could not reset website permissions.");
+      .catch(() => 'Could not reset website permissions.')
 
     if (failure) {
-      setPermissionSettingsError(failure);
+      setPermissionSettingsError(failure)
     }
 
-    setPermissionSettingsBusy(false);
-  };
+    setPermissionSettingsBusy(false)
+  }
 
   const respondPermission = (allow: boolean) => {
     if (!permissionPrompt) {
-      return;
+      return
     }
 
     window.treeportDesktop?.respondBrowserPermission?.(
       permissionPrompt.id,
-      allow,
-    );
-  };
+      allow
+    )
+  }
 
   useEffect(() => {
-    traceBrowserOpen(app.id, "browser.open.app_committed", {
+    traceBrowserOpen(app.id, 'browser.open.app_committed', {
       active,
-      localBrowser,
-    });
-  }, [active, localBrowser, app]);
+      localBrowser
+    })
+  }, [active, localBrowser, app])
 
-  const send = (message: Parameters<BrowserAppConnection["send"]>[0]) => {
-    connectionRef.current?.send(message);
-  };
+  const send = (message: Parameters<BrowserAppConnection['send']>[0]) => {
+    connectionRef.current?.send(message)
+  }
 
   const cancelTouches = () => {
     if (touchesRef.current.size === 0) {
-      return;
+      return
     }
 
-    touchesRef.current.clear();
-    send({ type: "touch", phase: "cancel", points: [] });
-  };
+    touchesRef.current.clear()
+    send({ type: 'touch', phase: 'cancel', points: [] })
+  }
 
   const dismissContext = () => {
-    contextRequestRef.current = null;
+    contextRequestRef.current = null
 
     if (contextTimeoutRef.current) {
-      clearTimeout(contextTimeoutRef.current);
-      contextTimeoutRef.current = null;
+      clearTimeout(contextTimeoutRef.current)
+      contextTimeoutRef.current = null
     }
 
     if (contextRef.current?.contextId) {
-      send({ type: "dismissContext", contextId: contextRef.current.contextId });
+      send({ type: 'dismissContext', contextId: contextRef.current.contextId })
     }
 
-    contextRef.current = null;
-    setContextMenu(null);
-  };
+    contextRef.current = null
+    setContextMenu(null)
+  }
 
   useEffect(() => {
     const cancelPending = () => {
       if (contextRequestRef.current) {
-        dismissContext();
+        dismissContext()
       }
-    };
-
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        cancelPending();
-      }
-    };
-
-    document.addEventListener("pointerdown", cancelPending, true);
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener("blur", dismissContext);
-
-    return () => {
-      document.removeEventListener("pointerdown", cancelPending, true);
-      document.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("blur", dismissContext);
-      dismissContext();
-      contextActionRef.current?.rejectCopy?.(
-        new Error("Browser context closed."),
-      );
-      contextActionRef.current = null;
-    };
-  }, [active, inputBlocked, connectionRevision, dismissContext]);
-
-  const contextAction = (action: BrowserContextAction) => {
-    const context = contextRef.current;
-
-    if (!context?.contextId || inputBlocked || !active) {
-      return;
     }
 
-    const requestId = crypto.randomUUID();
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        cancelPending()
+      }
+    }
+
+    document.addEventListener('pointerdown', cancelPending, true)
+    document.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', dismissContext)
+
+    return () => {
+      document.removeEventListener('pointerdown', cancelPending, true)
+      document.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', dismissContext)
+      dismissContext()
+      contextActionRef.current?.rejectCopy?.(
+        new Error('Browser context closed.')
+      )
+      contextActionRef.current = null
+    }
+  }, [active, inputBlocked, connectionRevision, dismissContext])
+
+  const contextAction = (action: BrowserContextAction) => {
+    const context = contextRef.current
+
+    if (!context?.contextId || inputBlocked || !active) {
+      return
+    }
+
+    const requestId = crypto.randomUUID()
 
     const pending: NonNullable<typeof contextActionRef.current> = {
       requestId,
       resolveCopy: null,
       rejectCopy: null,
-      timeout: null,
-    };
+      timeout: null
+    }
 
-    contextActionRef.current = pending;
+    contextActionRef.current = pending
 
-    if (action === "copyLink") {
+    if (action === 'copyLink') {
       if (!navigator.clipboard || !window.ClipboardItem) {
-        setError("Clipboard access is unavailable in this viewer.");
-        contextActionRef.current = null;
-        dismissContext();
+        setError('Clipboard access is unavailable in this viewer.')
+        contextActionRef.current = null
+        dismissContext()
 
-        return;
+        return
       }
 
       const text = new Promise<Blob>((resolve, reject) => {
-        pending.resolveCopy = resolve;
-        pending.rejectCopy = reject;
-      });
+        pending.resolveCopy = resolve
+        pending.rejectCopy = reject
+      })
 
       void navigator.clipboard
-        .write([new ClipboardItem({ "text/plain": text })])
+        .write([new ClipboardItem({ 'text/plain': text })])
         .catch(() =>
           setError(
-            "Could not copy the link address. Clipboard access is unavailable.",
-          ),
-        );
+            'Could not copy the link address. Clipboard access is unavailable.'
+          )
+        )
     }
 
     send({
-      type: "contextAction",
+      type: 'contextAction',
       requestId,
       contextId: context.contextId,
-      action,
-    });
-    contextRef.current = null;
-    dismissContext();
+      action
+    })
+    contextRef.current = null
+    dismissContext()
     pending.timeout = setTimeout(() => {
       if (contextActionRef.current !== pending) {
-        return;
+        return
       }
 
-      contextActionRef.current = null;
-      pending.rejectCopy?.(new Error("Browser action timed out."));
-      setError("The browser context action timed out. Right-click to retry.");
-    }, 10_000);
-  };
+      contextActionRef.current = null
+      pending.rejectCopy?.(new Error('Browser action timed out.'))
+      setError('The browser context action timed out. Right-click to retry.')
+    }, 10_000)
+  }
 
   const focusPage = () => {
     const page =
       videoRef.current ??
-      sectionRef.current?.querySelector<TreeportBrowserWebview>("webview");
+      sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
 
-    page?.focus({ preventScroll: true });
-  };
+    page?.focus({ preventScroll: true })
+  }
 
   const focusAddress = () => {
-    inputRef.current?.focus({ preventScroll: true });
-    inputRef.current?.select();
-  };
+    inputRef.current?.focus({ preventScroll: true })
+    inputRef.current?.select()
+  }
 
   const focusFind = () => {
     if (!stateRef.current?.controlled) {
-      return;
+      return
     }
 
-    setFindOpen(true);
+    setFindOpen(true)
     window.requestAnimationFrame(() => {
-      findInputRef.current?.focus({ preventScroll: true });
-      findInputRef.current?.select();
-    });
-  };
+      findInputRef.current?.focus({ preventScroll: true })
+      findInputRef.current?.select()
+    })
+  }
 
   const findInPage = (text: string, forward: boolean, findNext: boolean) => {
     const webview =
-      sectionRef.current?.querySelector<TreeportBrowserWebview>("webview");
+      sectionRef.current?.querySelector<TreeportBrowserWebview>('webview')
 
     if (webview) {
       if (text) {
         webview.findInPage(
           text,
-          findNext ? { forward, findNext: true } : undefined,
-        );
+          findNext ? { forward, findNext: true } : undefined
+        )
       } else {
-        webview.stopFindInPage("clearSelection");
+        webview.stopFindInPage('clearSelection')
       }
 
-      return;
+      return
     }
 
     if (!text) {
-      send({ type: "stopFind" });
+      send({ type: 'stopFind' })
 
-      return;
+      return
     }
 
-    send({ type: "takeControl" });
-    send({ type: "find", text, forward, findNext });
-  };
+    send({ type: 'takeControl' })
+    send({ type: 'find', text, forward, findNext })
+  }
 
   const closeFind = () => {
-    setFindOpen(false);
-    findInPage("", true, false);
-    window.requestAnimationFrame(focusPage);
-  };
+    setFindOpen(false)
+    findInPage('', true, false)
+    window.requestAnimationFrame(focusPage)
+  }
 
   const receiveMessage = (message: BrowserServerMessage) => {
     if (
-      message.type === "videoReady" ||
-      message.type === "videoAnswer" ||
-      message.type === "webcodecsReady"
+      message.type === 'videoReady' ||
+      message.type === 'videoAnswer' ||
+      message.type === 'webcodecsReady'
     ) {
-      return;
+      return
     }
 
-    if (message.type === "fileChooser") {
-      setFileChooser(message);
+    if (message.type === 'fileChooser') {
+      setFileChooser(message)
 
-      return;
+      return
     }
 
-    if (message.type === "fileChooserClosed") {
+    if (message.type === 'fileChooserClosed') {
       setFileChooser((current) =>
-        current?.requestId === message.requestId ? null : current,
-      );
+        current?.requestId === message.requestId ? null : current
+      )
 
       if (message.error) {
-        setError(message.error);
+        setError(message.error)
       }
 
-      return;
+      return
     }
 
-    if (message.type === "dialog") {
-      setPageDialog(message);
+    if (message.type === 'dialog') {
+      setPageDialog(message)
 
-      return;
+      return
     }
 
-    if (message.type === "dialogClosed") {
+    if (message.type === 'dialogClosed') {
       setPageDialog((current) =>
-        current?.requestId === message.requestId ? null : current,
-      );
+        current?.requestId === message.requestId ? null : current
+      )
 
-      return;
+      return
     }
 
-    if (message.type === "select") {
-      const video = videoRef.current;
+    if (message.type === 'select') {
+      const video = videoRef.current
 
       if (!video) {
         connectionRef.current?.send({
-          type: "selectResponse",
+          type: 'selectResponse',
           requestId: message.requestId,
-          index: null,
-        });
+          index: null
+        })
 
-        return;
+        return
       }
 
       // EXTERNAL: The video letterboxes the page, so map page pixels through
       // the same fit that pointer input uses.
-      const bounds = video.getBoundingClientRect();
-      const viewport = stateRef.current?.viewport ?? viewportRef.current;
+      const bounds = video.getBoundingClientRect()
+      const viewport = stateRef.current?.viewport ?? viewportRef.current
 
       const image =
         video.videoWidth && video.videoHeight
           ? { width: video.videoWidth, height: video.videoHeight }
-          : viewport;
+          : viewport
 
       const fit = Math.min(
         bounds.width / image.width,
-        bounds.height / image.height,
-      );
+        bounds.height / image.height
+      )
 
-      const scaleX = (image.width * fit) / viewport.width;
-      const scaleY = (image.height * fit) / viewport.height;
+      const scaleX = (image.width * fit) / viewport.width
+      const scaleY = (image.height * fit) / viewport.height
       setPageSelect({
         request: message,
         anchor: {
@@ -654,232 +654,232 @@ export function BrowserAppWorkspace({
             (bounds.height - image.height * fit) / 2 +
             message.y * scaleY,
           width: message.width * scaleX,
-          height: message.height * scaleY,
-        },
-      });
+          height: message.height * scaleY
+        }
+      })
 
-      return;
+      return
     }
 
-    if (message.type === "selectClosed") {
+    if (message.type === 'selectClosed') {
       setPageSelect((current) =>
-        current?.request.requestId === message.requestId ? null : current,
-      );
+        current?.request.requestId === message.requestId ? null : current
+      )
 
-      return;
+      return
     }
 
-    if (message.type === "download") {
-      const link = document.createElement("a");
-      link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`;
-      link.download = message.filename;
-      link.click();
+    if (message.type === 'download') {
+      const link = document.createElement('a')
+      link.href = `/api/browser-downloads/${encodeURIComponent(message.token)}`
+      link.download = message.filename
+      link.click()
 
-      return;
+      return
     }
 
-    if (message.type === "clipboardWrite") {
+    if (message.type === 'clipboardWrite') {
       if (
         !stateRef.current?.controlled ||
         !videoRef.current ||
         sectionRef.current?.inert
       ) {
-        return;
+        return
       }
 
-      const clipboard = message.clipboard;
-      setError(null);
-      setClipboardToCopy(clipboard);
+      const clipboard = message.clipboard
+      setError(null)
+      setClipboardToCopy(clipboard)
       void writeBrowserClipboard(clipboard)
         .then(() =>
           setClipboardToCopy((current) =>
-            current === clipboard ? null : current,
-          ),
+            current === clipboard ? null : current
+          )
         )
         .catch((cause: unknown) =>
           setError(
             cause instanceof Error
               ? `Couldn’t copy: ${cause.message}`
-              : "Couldn’t copy. Click Copy to clipboard to retry.",
-          ),
-        );
+              : 'Couldn’t copy. Click Copy to clipboard to retry.'
+          )
+        )
 
-      return;
+      return
     }
 
-    if (message.type === "copyResult") {
-      const pending = pendingCopiesRef.current.get(message.requestId);
+    if (message.type === 'copyResult') {
+      const pending = pendingCopiesRef.current.get(message.requestId)
 
       if (message.error !== null) {
-        pending?.reject(new Error(message.error));
+        pending?.reject(new Error(message.error))
       } else {
-        pending?.resolve(message.clipboard);
+        pending?.resolve(message.clipboard)
       }
 
-      return;
+      return
     }
 
-    const canvas = videoRef.current;
+    const canvas = videoRef.current
 
-    if (message.type === "contextResult") {
+    if (message.type === 'contextResult') {
       if (message.requestId !== contextRequestRef.current) {
         if (message.contextId) {
-          send({ type: "dismissContext", contextId: message.contextId });
+          send({ type: 'dismissContext', contextId: message.contextId })
         }
 
-        return;
+        return
       }
 
-      contextRequestRef.current = null;
+      contextRequestRef.current = null
 
       if (contextTimeoutRef.current) {
-        clearTimeout(contextTimeoutRef.current);
-        contextTimeoutRef.current = null;
+        clearTimeout(contextTimeoutRef.current)
+        contextTimeoutRef.current = null
       }
 
-      contextRef.current = message.contextId ? message : null;
-      setContextMenu(contextRef.current);
+      contextRef.current = message.contextId ? message : null
+      setContextMenu(contextRef.current)
 
-      return;
+      return
     }
 
-    if (message.type === "contextActionResult") {
-      const pending = contextActionRef.current;
+    if (message.type === 'contextActionResult') {
+      const pending = contextActionRef.current
 
       if (message.requestId !== pending?.requestId) {
-        return;
+        return
       }
 
-      contextActionRef.current = null;
+      contextActionRef.current = null
 
       if (pending.timeout) {
-        clearTimeout(pending.timeout);
+        clearTimeout(pending.timeout)
       }
 
-      if (message.action === "copyLink") {
+      if (message.action === 'copyLink') {
         if (message.linkUrl) {
           pending.resolveCopy?.(
-            new Blob([message.linkUrl], { type: "text/plain" }),
-          );
+            new Blob([message.linkUrl], { type: 'text/plain' })
+          )
         } else {
-          pending.rejectCopy?.(new Error("The link is unavailable."));
+          pending.rejectCopy?.(new Error('The link is unavailable.'))
         }
       }
 
-      if (message.action === "inspect" && message.backendNodeId !== null) {
+      if (message.action === 'inspect' && message.backendNodeId !== null) {
         void window.treeportDesktop
           ?.inspectBrowserElement?.(
             app.id,
             message.backendNodeId,
-            message.targetId,
+            message.targetId
           )
           .then((opened) => {
             if (!opened) {
-              setError("Remote element inspection is unavailable.");
+              setError('Remote element inspection is unavailable.')
             }
           })
-          .catch(() => setError("Could not open remote DevTools."));
+          .catch(() => setError('Could not open remote DevTools.'))
       }
 
-      return;
+      return
     }
 
-    if (message.type === "cursor") {
+    if (message.type === 'cursor') {
       if (canvas && stateRef.current?.controlled) {
-        canvas.style.cursor = message.cursor;
+        canvas.style.cursor = message.cursor
       }
 
-      return;
+      return
     }
 
     if (
-      message.type === "ready" ||
-      message.type === "state" ||
-      message.type === "controlChanged"
+      message.type === 'ready' ||
+      message.type === 'state' ||
+      message.type === 'controlChanged'
     ) {
-      const previousUrl = stateRef.current?.url ?? app.url;
+      const previousUrl = stateRef.current?.url ?? app.url
 
       if (
-        message.type === "ready" ||
+        message.type === 'ready' ||
         !message.state.controlled ||
         message.state.loading ||
         message.state.url !== previousUrl
       ) {
-        dismissContext();
+        dismissContext()
         contextActionRef.current?.rejectCopy?.(
-          new Error("The browser context changed."),
-        );
-        contextActionRef.current = null;
+          new Error('The browser context changed.')
+        )
+        contextActionRef.current = null
       }
 
       if (
         canvas &&
-        (message.type === "ready" ||
+        (message.type === 'ready' ||
           !message.state.controlled ||
           message.state.url !== previousUrl)
       ) {
-        canvas.style.cursor = "default";
+        canvas.style.cursor = 'default'
 
         if (message.state.controlled && message.state.url !== previousUrl) {
-          cancelTouches();
+          cancelTouches()
         } else {
-          touchesRef.current.clear();
+          touchesRef.current.clear()
         }
       }
 
-      stateRef.current = message.state;
+      stateRef.current = message.state
 
       if (
         message.state.viewport.width > 0 &&
         message.state.viewport.height > 0
       ) {
-        viewportRef.current = message.state.viewport;
+        viewportRef.current = message.state.viewport
       }
 
-      setState(message.state);
+      setState(message.state)
 
-      if (message.type === "ready") {
-        setPageDialog(null);
-        setPageSelect(null);
-        traceBrowserOpen(app.id, "browser.open.runtime_ready");
-        setAddressFocusRevision((revision) => revision + 1);
-        setFailure(null);
+      if (message.type === 'ready') {
+        setPageDialog(null)
+        setPageSelect(null)
+        traceBrowserOpen(app.id, 'browser.open.runtime_ready')
+        setAddressFocusRevision((revision) => revision + 1)
+        setFailure(null)
       }
 
-      onLoadingChange(app.id, message.state.loading);
-      onFaviconChange(app.id, message.state.faviconUrl);
+      onLoadingChange(app.id, message.state.loading)
+      onFaviconChange(app.id, message.state.faviconUrl)
 
       if (!addressDirtyRef.current && message.state.url !== previousUrl) {
-        setError(null);
+        setError(null)
       }
 
-      const pendingNavigation = pendingNavigationRef.current;
+      const pendingNavigation = pendingNavigationRef.current
 
       const validUrl =
         decodeUnknownOrNull(browserObservedUrlSchema, message.state.url) !==
-        null;
+        null
 
       const navigationStarted =
         pendingNavigation === null ||
         (validUrl &&
           (message.state.url === pendingNavigation.targetUrl ||
-            message.state.url !== pendingNavigation.startUrl));
+            message.state.url !== pendingNavigation.startUrl))
 
       if (!navigationStarted) {
-        return;
+        return
       }
 
-      pendingNavigationRef.current = null;
+      pendingNavigationRef.current = null
 
       const receivedAddress =
-        message.state.url === "about:blank"
-          ? ""
+        message.state.url === 'about:blank'
+          ? ''
           : validUrl
             ? message.state.url
-            : null;
+            : null
 
       if (receivedAddress === null) {
-        return;
+        return
       }
 
       if (addressDirtyRef.current) {
@@ -887,180 +887,180 @@ export function BrowserAppWorkspace({
           document.activeElement === inputRef.current ||
           message.state.url === previousUrl
         ) {
-          return;
+          return
         }
 
-        addressDirtyRef.current = false;
-        setError(null);
+        addressDirtyRef.current = false
+        setError(null)
       }
 
-      setInputValue(receivedAddress);
+      setInputValue(receivedAddress)
 
-      return;
+      return
     }
 
     if (canvas) {
-      canvas.style.cursor = "default";
+      canvas.style.cursor = 'default'
     }
 
-    setFileChooser(null);
-    dismissContext();
+    setFileChooser(null)
+    dismissContext()
     contextActionRef.current?.rejectCopy?.(
-      new Error("The browser action failed."),
-    );
-    contextActionRef.current = null;
-    onLoadingChange(app.id, false);
+      new Error('The browser action failed.')
+    )
+    contextActionRef.current = null
+    onLoadingChange(app.id, false)
 
     if (
-      message.type === "browserUnavailable" ||
-      message.type === "videoUnavailable"
+      message.type === 'browserUnavailable' ||
+      message.type === 'videoUnavailable'
     ) {
-      if (message.type === "browserUnavailable") {
-        stateRef.current = null;
-        setState(null);
-        onFaviconChange(app.id, null);
+      if (message.type === 'browserUnavailable') {
+        stateRef.current = null
+        setState(null)
+        onFaviconChange(app.id, null)
       }
 
       setFailure({
         message: message.message,
-        setup: message.type === "browserUnavailable" ? message.setup : null,
-      });
+        setup: message.type === 'browserUnavailable' ? message.setup : null
+      })
 
-      return;
+      return
     }
 
-    pendingNavigationRef.current = null;
+    pendingNavigationRef.current = null
 
     if (
-      message.type === "videoSettingsResult" ||
-      message.type === "videoChannel"
+      message.type === 'videoSettingsResult' ||
+      message.type === 'videoChannel'
     ) {
-      return;
+      return
     }
 
-    setError(message.type === "closed" ? message.reason : message.message);
-  };
+    setError(message.type === 'closed' ? message.reason : message.message)
+  }
 
   const receiveRemoteMessage = useEffectEvent((message: BrowserServerMessage) =>
-    receiveMessage(message),
-  );
+    receiveMessage(message)
+  )
 
-  const remoteVisible = useEffectEvent(() => active && !document.hidden);
+  const remoteVisible = useEffectEvent(() => active && !document.hidden)
 
   useEffect(() => {
     if (localBrowser) {
-      return;
+      return
     }
 
-    traceBrowserOpen(app.id, "browser.hosted.attach_started");
-    const video = videoRef.current;
-    const canvasHost = canvasHostRef.current;
+    traceBrowserOpen(app.id, 'browser.hosted.attach_started')
+    const video = videoRef.current
+    const canvasHost = canvasHostRef.current
 
     if (!video || !canvasHost) {
-      return;
+      return
     }
 
     // EXTERNAL: A worker takes over the canvas; control of a canvas transfers only once.
-    const canvas = document.createElement("canvas");
-    canvas.className = "block size-full object-contain";
-    canvasHost.replaceChildren(canvas);
-    let firstFrame = true;
+    const canvas = document.createElement('canvas')
+    canvas.className = 'block size-full object-contain'
+    canvasHost.replaceChildren(canvas)
+    let firstFrame = true
 
     const playing = () => {
       if (firstFrame) {
-        firstFrame = false;
-        traceBrowserOpen(app.id, "browser.hosted.first_frame_drawn");
+        firstFrame = false
+        traceBrowserOpen(app.id, 'browser.hosted.first_frame_drawn')
       }
 
-      setStreamStatus(null);
-      setFailure(null);
-      setError(null);
-    };
+      setStreamStatus(null)
+      setFailure(null)
+      setError(null)
+    }
 
-    video.addEventListener("playing", playing);
+    video.addEventListener('playing', playing)
 
     const connection = connectRemoteBrowser(app.id, video, canvas, {
       message: receiveRemoteMessage,
       failed: (message) => setFailure({ message, setup: null }),
       statusChanged: setStreamStatus,
-      presented: playing,
-    });
+      presented: playing
+    })
 
-    connection.setMuted(audioMutedRef.current);
-    connection.setVisible(remoteVisible());
-    remoteConnectionRef.current = connection;
-    connectionRef.current = connection;
-    setConnection(connection);
+    connection.setMuted(audioMutedRef.current)
+    connection.setVisible(remoteVisible())
+    remoteConnectionRef.current = connection
+    connectionRef.current = connection
+    setConnection(connection)
 
     return () => {
       if (touchesRef.current.size > 0) {
-        touchesRef.current.clear();
-        connection.send({ type: "touch", phase: "cancel", points: [] });
+        touchesRef.current.clear()
+        connection.send({ type: 'touch', phase: 'cancel', points: [] })
       }
 
       if (connectionRef.current === connection) {
-        connectionRef.current = null;
-        setConnection(null);
+        connectionRef.current = null
+        setConnection(null)
       }
 
       if (videoRef.current) {
-        videoRef.current.style.cursor = "default";
+        videoRef.current.style.cursor = 'default'
       }
 
       for (const pending of pendingCopiesRef.current.values()) {
         pending.reject(
-          new Error("Browser disconnected before copying finished."),
-        );
+          new Error('Browser disconnected before copying finished.')
+        )
       }
 
-      pendingCopiesRef.current.clear();
-      video.removeEventListener("playing", playing);
+      pendingCopiesRef.current.clear()
+      video.removeEventListener('playing', playing)
 
       if (remoteConnectionRef.current === connection) {
-        remoteConnectionRef.current = null;
+        remoteConnectionRef.current = null
       }
 
-      connection.dispose();
-      canvas.remove();
-    };
-  }, [connectionRevision, localBrowser, app.id, send]);
+      connection.dispose()
+      canvas.remove()
+    }
+  }, [connectionRevision, localBrowser, app.id, send])
 
   const setLocalConnection = (connection: BrowserAppConnection | null) => {
-    connectionRef.current = connection;
-    setConnection(connection);
-    const pendingNavigation = pendingNavigationRef.current;
+    connectionRef.current = connection
+    setConnection(connection)
+    const pendingNavigation = pendingNavigationRef.current
 
     if (connection && pendingNavigation) {
-      connection.send({ type: "navigate", url: pendingNavigation.targetUrl });
+      connection.send({ type: 'navigate', url: pendingNavigation.targetUrl })
     }
-  };
+  }
 
   const setLocalBrowserPaintRetention = async (retained: boolean) => {
-    setLocalBrowserPaintRetained(retained);
+    setLocalBrowserPaintRetained(retained)
 
     if (!retained) {
-      return true;
+      return true
     }
 
-    let timer: number | null = null;
+    let timer: number | null = null
 
     const layoutReady = await Promise.race([
       new Promise<true>((resolve) =>
         window.requestAnimationFrame(() =>
-          window.requestAnimationFrame(() => resolve(true)),
-        ),
+          window.requestAnimationFrame(() => resolve(true))
+        )
       ),
       new Promise<false>((resolve) => {
-        timer = window.setTimeout(() => resolve(false), 2_000);
-      }),
-    ]);
+        timer = window.setTimeout(() => resolve(false), 2_000)
+      })
+    ])
 
     if (timer) {
-      window.clearTimeout(timer);
+      window.clearTimeout(timer)
     }
 
-    const section = sectionRef.current;
-    const webview = section?.querySelector<TreeportBrowserWebview>("webview");
+    const section = sectionRef.current
+    const webview = section?.querySelector<TreeportBrowserWebview>('webview')
 
     if (
       !layoutReady ||
@@ -1069,64 +1069,64 @@ export function BrowserAppWorkspace({
       !section.checkVisibility() ||
       !webview.checkVisibility()
     ) {
-      return false;
+      return false
     }
 
-    const sectionBounds = section.getBoundingClientRect();
-    const webviewBounds = webview.getBoundingClientRect();
+    const sectionBounds = section.getBoundingClientRect()
+    const webviewBounds = webview.getBoundingClientRect()
 
     return (
       sectionBounds.width > 0 &&
       sectionBounds.height > 0 &&
       webviewBounds.width > 0 &&
       webviewBounds.height > 0
-    );
-  };
+    )
+  }
 
   useEffect(() => {
     if (localBrowser) {
-      return;
+      return
     }
 
     const updateVisibility = () => {
-      connectionRef.current?.setVisible(active && !document.hidden);
-    };
+      connectionRef.current?.setVisible(active && !document.hidden)
+    }
 
-    updateVisibility();
-    document.addEventListener("visibilitychange", updateVisibility);
+    updateVisibility()
+    document.addEventListener('visibilitychange', updateVisibility)
 
     return () =>
-      document.removeEventListener("visibilitychange", updateVisibility);
-  }, [active, connectionRevision, localBrowser]);
+      document.removeEventListener('visibilitychange', updateVisibility)
+  }, [active, connectionRevision, localBrowser])
 
   useEffect(() => {
-    cancelTouches();
+    cancelTouches()
 
     const visibility = () => {
       if (document.hidden) {
-        cancelTouches();
+        cancelTouches()
       }
-    };
-
-    window.addEventListener("blur", cancelTouches);
-    document.addEventListener("visibilitychange", visibility);
-
-    return () => {
-      window.removeEventListener("blur", cancelTouches);
-      document.removeEventListener("visibilitychange", visibility);
-      cancelTouches();
-    };
-  }, [active, cancelTouches, connectionRevision, inputBlocked]);
-
-  useEffect(() => {
-    const canvas = videoRef.current;
-
-    if (localBrowser || !canvas || !active) {
-      return;
     }
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let viewport: { width: number; height: number } | null = null;
+    window.addEventListener('blur', cancelTouches)
+    document.addEventListener('visibilitychange', visibility)
+
+    return () => {
+      window.removeEventListener('blur', cancelTouches)
+      document.removeEventListener('visibilitychange', visibility)
+      cancelTouches()
+    }
+  }, [active, cancelTouches, connectionRevision, inputBlocked])
+
+  useEffect(() => {
+    const canvas = videoRef.current
+
+    if (localBrowser || !canvas || !active) {
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let viewport: { width: number; height: number } | null = null
 
     const observer = new ResizeObserver(([entry]) => {
       if (
@@ -1134,352 +1134,352 @@ export function BrowserAppWorkspace({
         entry.contentRect.width <= 0 ||
         entry.contentRect.height <= 0
       ) {
-        return;
+        return
       }
 
       viewport = viewportOverrideRef.current ?? {
         width: Math.max(
           2,
-          Math.min(3_840, Math.floor(entry.contentRect.width / 2) * 2),
+          Math.min(3_840, Math.floor(entry.contentRect.width / 2) * 2)
         ),
         height: Math.max(
           2,
-          Math.min(2_160, Math.floor(entry.contentRect.height / 2) * 2),
-        ),
-      };
+          Math.min(2_160, Math.floor(entry.contentRect.height / 2) * 2)
+        )
+      }
 
       if (timer) {
-        return;
+        return
       }
 
       timer = setTimeout(() => {
-        timer = null;
+        timer = null
 
         if (viewport) {
-          send({ type: "resize", ...viewport });
+          send({ type: 'resize', ...viewport })
         }
-      }, 100);
-    });
+      }, 100)
+    })
 
-    observer.observe(canvas);
+    observer.observe(canvas)
 
     return () => {
-      observer.disconnect();
+      observer.disconnect()
 
       if (timer) {
-        clearTimeout(timer);
+        clearTimeout(timer)
       }
-    };
-  }, [active, connectionRevision, localBrowser, send]);
+    }
+  }, [active, connectionRevision, localBrowser, send])
 
   useEffect(() => {
-    const area = viewportAreaRef.current;
+    const area = viewportAreaRef.current
 
     if (!area || !active) {
-      return;
+      return
     }
 
     const observer = new ResizeObserver(([entry]) => {
       if (entry) {
         setViewportSpace({
           width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
+          height: entry.contentRect.height
+        })
       }
-    });
+    })
 
-    observer.observe(area);
+    observer.observe(area)
 
-    return () => observer.disconnect();
-  }, [active]);
+    return () => observer.disconnect()
+  }, [active])
 
   /* eslint-disable react-you-might-not-need-an-effect/no-event-handler -- Workspace route activation owns Browser focus. */
   useEffect(() => {
     if (!active || autoFocusBlocked || !autoFocusAddressRef.current) {
-      return;
+      return
     }
 
-    let frame = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let frame = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
 
     const autoFocusAddress = () => {
       if (document.querySelector('[role="dialog"], [role="alertdialog"]')) {
-        frame = window.requestAnimationFrame(autoFocusAddress);
+        frame = window.requestAnimationFrame(autoFocusAddress)
 
-        return;
+        return
       }
 
       timer = setTimeout(() => {
-        const input = inputRef.current;
+        const input = inputRef.current
 
         if (
           !input ||
-          input.value !== "" ||
-          (stateRef.current?.url ?? "about:blank") !== "about:blank"
+          input.value !== '' ||
+          (stateRef.current?.url ?? 'about:blank') !== 'about:blank'
         ) {
-          return;
+          return
         }
 
-        focusAddress();
-        autoFocusAddressRef.current = false;
-      }, 50);
-    };
+        focusAddress()
+        autoFocusAddressRef.current = false
+      }, 50)
+    }
 
-    frame = window.requestAnimationFrame(autoFocusAddress);
+    frame = window.requestAnimationFrame(autoFocusAddress)
 
     return () => {
-      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(frame)
 
       if (timer) {
-        clearTimeout(timer);
+        clearTimeout(timer)
       }
-    };
-  }, [active, addressFocusRevision, autoFocusBlocked, focusAddress]);
+    }
+  }, [active, addressFocusRevision, autoFocusBlocked, focusAddress])
   /* eslint-enable react-you-might-not-need-an-effect/no-event-handler */
 
   useEffect(() => {
     if (!active) {
-      return;
+      return
     }
 
     const focusBrowserControl = (event: globalThis.KeyboardEvent) => {
-      const applePlatform = isApplePlatform();
+      const applePlatform = isApplePlatform()
 
       const modifier = applePlatform
         ? event.metaKey && !event.ctrlKey
-        : event.ctrlKey && !event.metaKey;
+        : event.ctrlKey && !event.metaKey
 
-      const key = event.key.toLowerCase();
+      const key = event.key.toLowerCase()
 
       if (
         !modifier ||
         event.altKey ||
         event.shiftKey ||
-        (key !== "f" && key !== "l") ||
+        (key !== 'f' && key !== 'l') ||
         autoFocusBlocked ||
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
-        return;
+        return
       }
 
-      event.preventDefault();
-      event.stopPropagation();
+      event.preventDefault()
+      event.stopPropagation()
 
-      if (key === "f") {
-        focusFind();
+      if (key === 'f') {
+        focusFind()
       } else {
-        focusAddress();
+        focusAddress()
       }
-    };
+    }
 
-    document.addEventListener("keydown", focusBrowserControl, true);
+    document.addEventListener('keydown', focusBrowserControl, true)
 
     return () =>
-      document.removeEventListener("keydown", focusBrowserControl, true);
-  }, [active, autoFocusBlocked, focusAddress, focusFind]);
+      document.removeEventListener('keydown', focusBrowserControl, true)
+  }, [active, autoFocusBlocked, focusAddress, focusFind])
 
   useEffect(() => {
-    const desktopBridge = window.treeportDesktop;
+    const desktopBridge = window.treeportDesktop
 
     if (!active || !desktopBridge?.onCommand) {
-      return;
+      return
     }
 
     return desktopBridge.onCommand((command) => {
-      if (command === "reload") {
-        send({ type: "reload" });
+      if (command === 'reload') {
+        send({ type: 'reload' })
 
-        return;
+        return
       }
 
       if (
-        (command !== "find-in-page" && command !== "focus-location") ||
+        (command !== 'find-in-page' && command !== 'focus-location') ||
         autoFocusBlocked ||
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
-        return;
+        return
       }
 
-      if (command === "find-in-page") {
-        focusFind();
+      if (command === 'find-in-page') {
+        focusFind()
       } else {
-        focusAddress();
+        focusAddress()
       }
-    });
-  }, [active, autoFocusBlocked, focusAddress, focusFind, send]);
+    })
+  }, [active, autoFocusBlocked, focusAddress, focusFind, send])
 
   const navigate = (value: string) => {
-    const parsed = parseBrowserAddress(value);
+    const parsed = parseBrowserAddress(value)
 
     if (!parsed) {
-      addressDirtyRef.current = true;
+      addressDirtyRef.current = true
       setError(
-        "Enter search terms or an HTTP, HTTPS, chrome://, or local file address without credentials.",
-      );
-      inputRef.current?.focus({ preventScroll: true });
+        'Enter search terms or an HTTP, HTTPS, chrome://, or local file address without credentials.'
+      )
+      inputRef.current?.focus({ preventScroll: true })
 
-      return;
+      return
     }
 
-    const targetUrl = parsed.href;
-    setError(null);
-    addressDirtyRef.current = false;
+    const targetUrl = parsed.href
+    setError(null)
+    addressDirtyRef.current = false
     pendingNavigationRef.current = {
       startUrl: stateRef.current?.url ?? app.url,
-      targetUrl,
-    };
-    setInputValue(targetUrl);
-    send({ type: "takeControl" });
-    send({ type: "navigate", url: targetUrl });
-    focusPage();
-  };
+      targetUrl
+    }
+    setInputValue(targetUrl)
+    send({ type: 'takeControl' })
+    send({ type: 'navigate', url: targetUrl })
+    focusPage()
+  }
 
   const resizeViewport = (
     size: { width: number; height: number } | null,
-    preset: z.infer<typeof viewportSettingsSchema>["preset"] = "responsive",
+    preset: z.infer<typeof viewportSettingsSchema>['preset'] = 'responsive'
   ) => {
-    const settings = { viewport: size, preset };
-    setViewportSettings(settings);
+    const settings = { viewport: size, preset }
+    setViewportSettings(settings)
 
     try {
       sessionStorage.setItem(
         `treeport-browser-viewport:${app.id}`,
-        JSON.stringify(settings),
-      );
+        JSON.stringify(settings)
+      )
     } catch {}
 
-    const needsControl = !stateRef.current?.controlled;
-    viewportOverrideRef.current = size;
+    const needsControl = !stateRef.current?.controlled
+    viewportOverrideRef.current = size
 
     if (needsControl) {
-      send({ type: "takeControl" });
+      send({ type: 'takeControl' })
     }
 
     if (size) {
-      setViewportWidth(String(size.width));
-      setViewportHeight(String(size.height));
+      setViewportWidth(String(size.width))
+      setViewportHeight(String(size.height))
 
       if (!localBrowser) {
-        send({ type: "resize", ...size });
+        send({ type: 'resize', ...size })
       }
     } else {
-      const bounds = videoRef.current?.getBoundingClientRect();
+      const bounds = videoRef.current?.getBoundingClientRect()
 
       if (bounds && bounds.width > 0 && bounds.height > 0) {
         send({
-          type: "resize",
+          type: 'resize',
           width: Math.max(1, Math.min(3_840, Math.round(bounds.width))),
-          height: Math.max(1, Math.min(2_160, Math.round(bounds.height))),
-        });
+          height: Math.max(1, Math.min(2_160, Math.round(bounds.height)))
+        })
       }
     }
-  };
+  }
 
   const point = (event: {
-    currentTarget: HTMLVideoElement;
-    clientX: number;
-    clientY: number;
+    currentTarget: HTMLVideoElement
+    clientX: number
+    clientY: number
   }) => {
-    const canvas = event.currentTarget;
-    const bounds = canvas.getBoundingClientRect();
-    const viewport = stateRef.current?.viewport ?? viewportRef.current;
+    const canvas = event.currentTarget
+    const bounds = canvas.getBoundingClientRect()
+    const viewport = stateRef.current?.viewport ?? viewportRef.current
 
     const image =
       canvas.videoWidth && canvas.videoHeight
         ? { width: canvas.videoWidth, height: canvas.videoHeight }
-        : viewport;
+        : viewport
 
     const scale = Math.min(
       bounds.width / image.width,
-      bounds.height / image.height,
-    );
+      bounds.height / image.height
+    )
 
-    const width = image.width * scale;
-    const height = image.height * scale;
-    const left = bounds.left + (bounds.width - width) / 2;
-    const top = bounds.top + (bounds.height - height) / 2;
+    const width = image.width * scale
+    const height = image.height * scale
+    const left = bounds.left + (bounds.width - width) / 2
+    const top = bounds.top + (bounds.height - height) / 2
 
     return {
       x: Math.max(
         0,
         Math.min(
           viewport.width,
-          ((event.clientX - left) / width) * viewport.width,
-        ),
+          ((event.clientX - left) / width) * viewport.width
+        )
       ),
       y: Math.max(
         0,
         Math.min(
           viewport.height,
-          ((event.clientY - top) / height) * viewport.height,
-        ),
-      ),
-    };
-  };
+          ((event.clientY - top) / height) * viewport.height
+        )
+      )
+    }
+  }
 
-  const button = (value: number): "left" | "right" | "middle" =>
-    value === 2 ? "right" : value === 1 ? "middle" : "left";
+  const button = (value: number): 'left' | 'right' | 'middle' =>
+    value === 2 ? 'right' : value === 1 ? 'middle' : 'left'
 
   const submit = (event: FormEvent) => {
-    event.preventDefault();
-    navigate(inputValue);
-  };
+    event.preventDefault()
+    navigate(inputValue)
+  }
 
   const copySelection = () => {
     if (!connectionRef.current || inputBlocked) {
-      setError("Copy is unavailable. Reconnect, then retry.");
+      setError('Copy is unavailable. Reconnect, then retry.')
 
-      return;
+      return
     }
 
-    setClipboardToCopy(null);
-    setError(null);
-    const requestId = crypto.randomUUID();
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    setClipboardToCopy(null)
+    setError(null)
+    const requestId = crypto.randomUUID()
+    let timer: ReturnType<typeof setTimeout> | null = null
 
     const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
-      pendingCopiesRef.current.set(requestId, { resolve, reject });
+      pendingCopiesRef.current.set(requestId, { resolve, reject })
       timer = setTimeout(
         () =>
-          reject(new Error("Copy timed out. Select the text and try again.")),
-        10_000,
-      );
-      send({ type: "takeControl" });
-      send({ type: "copy", requestId });
+          reject(new Error('Copy timed out. Select the text and try again.')),
+        10_000
+      )
+      send({ type: 'takeControl' })
+      send({ type: 'copy', requestId })
     }).finally(() => {
       if (timer !== null) {
-        clearTimeout(timer);
+        clearTimeout(timer)
       }
 
-      pendingCopiesRef.current.delete(requestId);
-    });
+      pendingCopiesRef.current.delete(requestId)
+    })
 
     void result
       .then((clipboard) => {
         if (clipboard === null) {
-          return;
+          return
         }
 
         // EXTERNAL: A browser may require a fresh gesture once the remote response has
         // arrived. Retain the exact payload for the explicit retry button.
-        setClipboardToCopy(clipboard);
+        setClipboardToCopy(clipboard)
 
         return writeBrowserClipboard(clipboard).then(() =>
-          setClipboardToCopy(null),
-        );
+          setClipboardToCopy(null)
+        )
       })
       .catch((cause: unknown) =>
         setError(
           cause instanceof Error
             ? `Couldn’t copy: ${cause.message}`
-            : "Couldn’t copy the selected content. Try again.",
-        ),
-      );
-  };
+            : 'Couldn’t copy the selected content. Try again.'
+        )
+      )
+  }
 
   const key = (
     event: KeyboardEvent<HTMLVideoElement>,
-    phase: "down" | "up",
+    phase: 'down' | 'up'
   ) => {
     // EXTERNAL: Non-Latin layouts report letters such as "с" for Ctrl+C. Use the
     // physical key for shortcuts so they match what pages and the viewer expect.
@@ -1488,78 +1488,78 @@ export function BrowserAppWorkspace({
       /^[\u0080-\u{10ffff}]$/u.test(event.key) &&
       /^Key[A-Z]$/.test(event.code)
         ? event.code.slice(3).toLowerCase()
-        : event.key;
+        : event.key
 
     const isCopyShortcut =
-      pressedKey.toLowerCase() === "c" &&
+      pressedKey.toLowerCase() === 'c' &&
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
-      !event.shiftKey;
+      !event.shiftKey
 
     if (isCopyShortcut) {
-      event.preventDefault();
+      event.preventDefault()
 
-      if (phase !== "down" || event.repeat) {
-        return;
+      if (phase !== 'down' || event.repeat) {
+        return
       }
 
-      copySelection();
+      copySelection()
 
-      return;
+      return
     }
 
     const isPasteShortcut =
-      pressedKey.toLowerCase() === "v" &&
+      pressedKey.toLowerCase() === 'v' &&
       (event.ctrlKey || event.metaKey) &&
-      !event.altKey;
+      !event.altKey
 
     const isShiftInsert =
-      pressedKey === "Insert" &&
+      pressedKey === 'Insert' &&
       event.shiftKey &&
       !event.ctrlKey &&
       !event.metaKey &&
-      !event.altKey;
+      !event.altKey
 
     // EXTERNAL: Dead and compose keys only start a character; the resulting
     // character arrives as its own key event. Playwright rejects these names.
     if (
       isPasteShortcut ||
       isShiftInsert ||
-      ["Dead", "Compose", "Unidentified"].includes(pressedKey)
+      ['Dead', 'Compose', 'Unidentified'].includes(pressedKey)
     ) {
-      return;
+      return
     }
 
-    event.preventDefault();
+    event.preventDefault()
 
-    if (phase === "down") {
-      send({ type: "takeControl" });
+    if (phase === 'down') {
+      send({ type: 'takeControl' })
     }
 
     send({
-      type: "key",
+      type: 'key',
       phase,
       key: pressedKey,
       modifiers:
         (event.altKey ? 1 : 0) |
         (event.ctrlKey ? 2 : 0) |
         (event.metaKey ? 4 : 0) |
-        (event.shiftKey ? 8 : 0),
-    });
-  };
+        (event.shiftKey ? 8 : 0)
+    })
+  }
 
   useEffect(() => {
-    const canvas = videoRef.current;
+    const canvas = videoRef.current
 
     if (localBrowser || !canvas || !active || inputBlocked) {
-      return;
+      return
     }
 
     const wheel = (event: WheelEvent) => {
-      event.preventDefault();
+      event.preventDefault()
 
       if (!stateRef.current?.controlled) {
-        send({ type: "takeControl" });
+        send({ type: 'takeControl' })
       }
 
       const unit =
@@ -1567,14 +1567,14 @@ export function BrowserAppWorkspace({
           ? 16
           : event.deltaMode === 2
             ? canvas.clientHeight
-            : 1;
+            : 1
 
       send({
-        type: "wheel",
+        type: 'wheel',
         ...point({
           currentTarget: canvas,
           clientX: event.clientX,
-          clientY: event.clientY,
+          clientY: event.clientY
         }),
         modifiers:
           (event.altKey ? 1 : 0) |
@@ -1582,16 +1582,16 @@ export function BrowserAppWorkspace({
           (event.metaKey ? 4 : 0) |
           (event.shiftKey ? 8 : 0),
         deltaX: Math.max(-10_000, Math.min(10_000, event.deltaX * unit)),
-        deltaY: Math.max(-10_000, Math.min(10_000, event.deltaY * unit)),
-      });
-    };
+        deltaY: Math.max(-10_000, Math.min(10_000, event.deltaY * unit))
+      })
+    }
 
     // EXTERNAL: React's delegated wheel listener is passive and cannot prevent the
     // containing workspace from scrolling along with the streamed page.
-    canvas.addEventListener("wheel", wheel, { passive: false });
+    canvas.addEventListener('wheel', wheel, { passive: false })
 
-    return () => canvas.removeEventListener("wheel", wheel);
-  }, [active, inputBlocked, localBrowser, point, send]);
+    return () => canvas.removeEventListener('wheel', wheel)
+  }, [active, inputBlocked, localBrowser, point, send])
 
   const sitePermissions =
     permissionSettings &&
@@ -1599,7 +1599,7 @@ export function BrowserAppWorkspace({
       (URL.canParse(state.url) &&
         new URL(state.url).origin === permissionSettings.origin))
       ? permissionSettings
-      : null;
+      : null
 
   const viewportScale = viewportOverride
     ? Math.max(
@@ -1607,14 +1607,14 @@ export function BrowserAppWorkspace({
         Math.min(
           1,
           (viewportSpace.width - 40) / viewportOverride.width,
-          (viewportSpace.height - 40) / viewportOverride.height,
-        ),
+          (viewportSpace.height - 40) / viewportOverride.height
+        )
       )
-    : 1;
+    : 1
 
   const applyViewportDimensions = () => {
-    const width = Number(viewportWidth);
-    const height = Number(viewportHeight);
+    const width = Number(viewportWidth)
+    const height = Number(viewportHeight)
 
     if (
       Number.isInteger(width) &&
@@ -1624,12 +1624,12 @@ export function BrowserAppWorkspace({
       height >= 1 &&
       height <= 2160
     ) {
-      resizeViewport({ width, height });
+      resizeViewport({ width, height })
     } else {
-      setViewportWidth(String(viewportOverride?.width ?? 390));
-      setViewportHeight(String(viewportOverride?.height ?? 844));
+      setViewportWidth(String(viewportOverride?.width ?? 390))
+      setViewportHeight(String(viewportOverride?.height ?? 844))
     }
-  };
+  }
 
   const viewportControls = (
     <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -1637,19 +1637,19 @@ export function BrowserAppWorkspace({
         aria-label="Viewport preset"
         value={viewportPreset}
         onChange={(event) => {
-          const preset = viewportPresetSchema.parse(event.target.value);
+          const preset = viewportPresetSchema.parse(event.target.value)
 
           const size = {
             responsive: null,
             phone: { width: 390, height: 844 },
             tablet: { width: 768, height: 1024 },
-            desktop: { width: 1280, height: 800 },
-          }[preset];
+            desktop: { width: 1280, height: 800 }
+          }[preset]
 
           resizeViewport(
             size ?? viewportOverride ?? { width: 390, height: 844 },
-            preset,
-          );
+            preset
+          )
         }}
       >
         <option value="responsive">Responsive</option>
@@ -1668,9 +1668,9 @@ export function BrowserAppWorkspace({
         onChange={(event) => setViewportWidth(event.target.value)}
         onBlur={applyViewportDimensions}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            applyViewportDimensions();
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            applyViewportDimensions()
           }
         }}
       />
@@ -1688,9 +1688,9 @@ export function BrowserAppWorkspace({
         onChange={(event) => setViewportHeight(event.target.value)}
         onBlur={applyViewportDimensions}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            applyViewportDimensions();
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            applyViewportDimensions()
           }
         }}
       />
@@ -1711,25 +1711,25 @@ export function BrowserAppWorkspace({
           if (viewportOverride) {
             resizeViewport({
               width: viewportOverride.height,
-              height: viewportOverride.width,
-            });
+              height: viewportOverride.width
+            })
           }
         }}
       >
         <ArrowsRightLeftIcon />
       </Button>
     </div>
-  );
+  )
 
   return (
     <section
       ref={sectionRef}
       className={
         active
-          ? "@container/browser-toolbar relative z-10 flex h-full min-h-0 flex-col"
+          ? '@container/browser-toolbar relative z-10 flex h-full min-h-0 flex-col'
           : localBrowserPaintRetained
-            ? "@container/browser-toolbar pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0"
-            : "hidden"
+            ? '@container/browser-toolbar pointer-events-none absolute inset-0 z-0 flex h-full min-h-0 flex-col opacity-0'
+            : 'hidden'
       }
       aria-label={app.title}
       aria-hidden={active ? undefined : true}
@@ -1747,7 +1747,7 @@ export function BrowserAppWorkspace({
           aria-label="Go back"
           title="Go back"
           disabled={!state?.canGoBack || !state.controlled}
-          onClick={() => send({ type: "back" })}
+          onClick={() => send({ type: 'back' })}
         >
           <ArrowLeftIcon />
         </Button>
@@ -1759,7 +1759,7 @@ export function BrowserAppWorkspace({
           aria-label="Go forward"
           title="Go forward"
           disabled={!state?.canGoForward || !state.controlled}
-          onClick={() => send({ type: "forward" })}
+          onClick={() => send({ type: 'forward' })}
         >
           <ArrowRightIcon />
         </Button>
@@ -1771,7 +1771,7 @@ export function BrowserAppWorkspace({
             aria-label="Stop loading"
             title="Stop loading"
             disabled={!state.controlled}
-            onClick={() => send({ type: "stop" })}
+            onClick={() => send({ type: 'stop' })}
           >
             <XMarkIcon />
           </Button>
@@ -1783,7 +1783,7 @@ export function BrowserAppWorkspace({
             aria-label="Reload application"
             title="Reload application"
             disabled={!state?.controlled}
-            onClick={() => send({ type: "reload" })}
+            onClick={() => send({ type: 'reload' })}
           >
             <ArrowPathIcon />
           </Button>
@@ -1803,57 +1803,57 @@ export function BrowserAppWorkspace({
           onPointerDown={(event) => {
             addressPointerSelectAllRef.current =
               event.button === 0 &&
-              document.activeElement !== event.currentTarget;
+              document.activeElement !== event.currentTarget
           }}
           onPointerUp={(event) => {
-            const selectAll = addressPointerSelectAllRef.current;
-            addressPointerSelectAllRef.current = false;
+            const selectAll = addressPointerSelectAllRef.current
+            addressPointerSelectAllRef.current = false
 
             if (
               selectAll &&
               event.currentTarget.selectionStart ===
                 event.currentTarget.selectionEnd
             ) {
-              event.currentTarget.select();
+              event.currentTarget.select()
             }
           }}
           onPointerCancel={() => {
-            addressPointerSelectAllRef.current = false;
+            addressPointerSelectAllRef.current = false
           }}
           onChange={(event) => {
-            addressDirtyRef.current = true;
-            setInputValue(event.target.value);
+            addressDirtyRef.current = true
+            setInputValue(event.target.value)
           }}
           onKeyDown={(event) => {
             if (
-              event.key !== "Escape" ||
+              event.key !== 'Escape' ||
               event.shiftKey ||
               event.altKey ||
               event.metaKey ||
               event.ctrlKey
             ) {
-              return;
+              return
             }
 
-            event.preventDefault();
+            event.preventDefault()
 
             if (!addressDirtyRef.current) {
-              focusPage();
+              focusPage()
 
-              return;
+              return
             }
 
             const acceptedAddress =
               pendingNavigationRef.current?.targetUrl ??
               stateRef.current?.url ??
-              app.url;
+              app.url
 
-            addressDirtyRef.current = false;
-            setError(null);
+            addressDirtyRef.current = false
+            setError(null)
             setInputValue(
-              acceptedAddress === "about:blank" ? "" : acceptedAddress,
-            );
-            window.requestAnimationFrame(() => inputRef.current?.select());
+              acceptedAddress === 'about:blank' ? '' : acceptedAddress
+            )
+            window.requestAnimationFrame(() => inputRef.current?.select())
           }}
         />
         {localBrowser && permissionPrompt?.appId === app.id ? (
@@ -1861,7 +1861,7 @@ export function BrowserAppWorkspace({
             open={active}
             onOpenChange={(open) => {
               if (!open) {
-                respondPermission(false);
+                respondPermission(false)
               }
             }}
           >
@@ -1919,7 +1919,7 @@ export function BrowserAppWorkspace({
         ) : null}
         <Button
           type="button"
-          variant={viewportOverride ? "secondary" : "ghost"}
+          variant={viewportOverride ? 'secondary' : 'ghost'}
           size="icon-sm"
           aria-label="Responsive mode"
           aria-pressed={viewportOverride !== null}
@@ -1927,7 +1927,7 @@ export function BrowserAppWorkspace({
           disabled={!state}
           onClick={() =>
             resizeViewport(
-              viewportOverride ? null : { width: 390, height: 844 },
+              viewportOverride ? null : { width: 390, height: 844 }
             )
           }
         >
@@ -1942,7 +1942,7 @@ export function BrowserAppWorkspace({
             title="Open DevTools"
             disabled={!state}
             onClick={() => {
-              void window.treeportDesktop?.openBrowserDevtools?.(app.id);
+              void window.treeportDesktop?.openBrowserDevtools?.(app.id)
             }}
           >
             <CodeBracketSquareIcon />
@@ -1954,11 +1954,11 @@ export function BrowserAppWorkspace({
           <Popover
             open={permissionsOpen}
             onOpenChange={(open) => {
-              setPermissionsOpen(open);
+              setPermissionsOpen(open)
 
               if (open) {
-                setPermissionSettings(null);
-                setPermissionSettingsError(null);
+                setPermissionSettings(null)
+                setPermissionSettingsError(null)
               }
             }}
           >
@@ -1992,8 +1992,8 @@ export function BrowserAppWorkspace({
                       >
                         <span className="min-w-0">
                           {decision.label.charAt(0).toUpperCase() +
-                            decision.label.slice(1)}{" "}
-                          · {decision.allowed ? "Allowed" : "Blocked"}
+                            decision.label.slice(1)}{' '}
+                          · {decision.allowed ? 'Allowed' : 'Blocked'}
                         </span>
                         <Button
                           type="button"
@@ -2005,7 +2005,7 @@ export function BrowserAppWorkspace({
                           onClick={() =>
                             void resetPermissions(
                               sitePermissions.origin,
-                              decision.capability,
+                              decision.capability
                             )
                           }
                         >
@@ -2017,8 +2017,8 @@ export function BrowserAppWorkspace({
                 ) : (
                   <p className="text-sm text-muted-foreground">
                     {sitePermissions.origin
-                      ? "No saved decisions for this website."
-                      : "No website open."}
+                      ? 'No saved decisions for this website.'
+                      : 'No website open.'}
                   </p>
                 )
               ) : (
@@ -2053,13 +2053,13 @@ export function BrowserAppWorkspace({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={audioMuted ? "Unmute" : "Mute"}
-            title={audioMuted ? "Unmute" : "Mute"}
+            aria-label={audioMuted ? 'Unmute' : 'Mute'}
+            title={audioMuted ? 'Unmute' : 'Mute'}
             aria-pressed={audioMuted}
             onClick={() => {
-              audioMutedRef.current = !audioMuted;
-              remoteConnectionRef.current?.setMuted(!audioMuted);
-              setAudioMuted(!audioMuted);
+              audioMutedRef.current = !audioMuted
+              remoteConnectionRef.current?.setMuted(!audioMuted)
+              setAudioMuted(!audioMuted)
             }}
           >
             {audioMuted ? <SpeakerXMarkIcon /> : <SpeakerWaveIcon />}
@@ -2103,8 +2103,8 @@ export function BrowserAppWorkspace({
               className="w-full justify-start"
               disabled={!state?.canGoForward || !state.controlled}
               onClick={() => {
-                send({ type: "forward" });
-                setToolsOpen(false);
+                send({ type: 'forward' })
+                setToolsOpen(false)
               }}
             >
               <ArrowRightIcon data-icon="inline-start" />
@@ -2116,13 +2116,13 @@ export function BrowserAppWorkspace({
               size="sm"
               onClick={() => {
                 resizeViewport(
-                  viewportOverride ? null : { width: 390, height: 844 },
-                );
-                setToolsOpen(false);
+                  viewportOverride ? null : { width: 390, height: 844 }
+                )
+                setToolsOpen(false)
               }}
             >
               <DevicePhoneMobileIcon data-icon="inline-start" />
-              {viewportOverride ? "Exit responsive mode" : "Responsive mode"}
+              {viewportOverride ? 'Exit responsive mode' : 'Responsive mode'}
             </Button>
           </PopoverContent>
         </Popover>
@@ -2141,14 +2141,14 @@ export function BrowserAppWorkspace({
               onClick={() => {
                 void writeBrowserClipboard(clipboardToCopy)
                   .then(() => {
-                    setClipboardToCopy(null);
-                    setError(null);
+                    setClipboardToCopy(null)
+                    setError(null)
                   })
                   .catch(() =>
                     setError(
-                      "Clipboard access was denied. Allow clipboard access for Treeport, then retry.",
-                    ),
-                  );
+                      'Clipboard access was denied. Allow clipboard access for Treeport, then retry.'
+                    )
+                  )
               }}
             >
               Copy to clipboard
@@ -2173,17 +2173,17 @@ export function BrowserAppWorkspace({
       <div
         ref={viewportAreaRef}
         className={cn(
-          "relative min-h-0 flex-1 overflow-hidden",
-          viewportOverride ? "bg-muted/40" : "bg-zinc-950",
+          'relative min-h-0 flex-1 overflow-hidden',
+          viewportOverride ? 'bg-muted/40' : 'bg-zinc-950'
         )}
       >
         <div
-          className={cn("relative", viewportOverride ? "mx-auto" : "size-full")}
+          className={cn('relative', viewportOverride ? 'mx-auto' : 'size-full')}
           style={
             viewportOverride
               ? {
                   width: viewportOverride.width * viewportScale + 40,
-                  height: viewportOverride.height * viewportScale + 40,
+                  height: viewportOverride.height * viewportScale + 40
                 }
               : undefined
           }
@@ -2195,83 +2195,83 @@ export function BrowserAppWorkspace({
             >
               {[
                 {
-                  edge: "left",
-                  label: "Resize viewport width from left",
+                  edge: 'left',
+                  label: 'Resize viewport width from left',
                   x: -2,
                   y: 0,
-                  className: "left-0 top-5 bottom-5 w-5 cursor-ew-resize",
-                  grip: "h-10 w-1 border-x-2",
+                  className: 'left-0 top-5 bottom-5 w-5 cursor-ew-resize',
+                  grip: 'h-10 w-1 border-x-2'
                 },
                 {
-                  edge: "right",
-                  label: "Resize viewport width",
+                  edge: 'right',
+                  label: 'Resize viewport width',
                   x: 2,
                   y: 0,
-                  className: "right-0 top-5 bottom-5 w-5 cursor-ew-resize",
-                  grip: "h-10 w-1 border-x-2",
+                  className: 'right-0 top-5 bottom-5 w-5 cursor-ew-resize',
+                  grip: 'h-10 w-1 border-x-2'
                 },
                 {
-                  edge: "top",
-                  label: "Resize viewport height from top",
+                  edge: 'top',
+                  label: 'Resize viewport height from top',
                   x: 0,
                   y: -1,
-                  className: "top-0 left-5 right-5 h-5 cursor-ns-resize",
-                  grip: "h-1 w-10 border-y-2",
+                  className: 'top-0 left-5 right-5 h-5 cursor-ns-resize',
+                  grip: 'h-1 w-10 border-y-2'
                 },
                 {
-                  edge: "bottom",
-                  label: "Resize viewport height",
+                  edge: 'bottom',
+                  label: 'Resize viewport height',
                   x: 0,
                   y: 1,
-                  className: "bottom-0 left-5 right-5 h-5 cursor-ns-resize",
-                  grip: "h-1 w-10 border-y-2",
+                  className: 'bottom-0 left-5 right-5 h-5 cursor-ns-resize',
+                  grip: 'h-1 w-10 border-y-2'
                 },
                 {
-                  edge: "corner",
-                  label: "Resize responsive viewport",
+                  edge: 'corner',
+                  label: 'Resize responsive viewport',
                   x: 2,
                   y: 1,
-                  className: "right-0 bottom-0 size-5 cursor-nwse-resize",
-                  grip: "size-3 border-r-2 border-b-2",
-                },
+                  className: 'right-0 bottom-0 size-5 cursor-nwse-resize',
+                  grip: 'size-3 border-r-2 border-b-2'
+                }
               ].map(({ edge, label, x, y, className, grip }) => (
                 <button
                   key={edge}
                   type="button"
-                  data-axis={x && y ? "both" : x ? "width" : "height"}
+                  data-axis={x && y ? 'both' : x ? 'width' : 'height'}
                   className={cn(
-                    "pointer-events-auto absolute flex touch-none items-center justify-center bg-muted/60 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                    'pointer-events-auto absolute flex touch-none items-center justify-center bg-muted/60 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring',
                     x && y
-                      ? "hover:opacity-100 focus-visible:opacity-100 active:opacity-100"
+                      ? 'hover:opacity-100 focus-visible:opacity-100 active:opacity-100'
                       : x
-                        ? "group-has-[[data-axis=width]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100"
-                        : "group-has-[[data-axis=height]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100",
-                    className,
+                        ? 'group-has-[[data-axis=width]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100'
+                        : 'group-has-[[data-axis=height]:is(:hover,:focus-visible,:active)]/viewport-handles:opacity-100',
+                    className
                   )}
                   aria-label={label}
                   title="Drag to resize; arrow keys resize by 10 px"
                   onPointerDown={(event) => {
                     if (event.button !== 0) {
-                      return;
+                      return
                     }
 
-                    event.preventDefault();
+                    event.preventDefault()
                     viewportDragRef.current = {
                       x: event.clientX,
                       y: event.clientY,
                       ...viewportOverride,
-                      scale: viewportScale,
-                    };
-                    event.currentTarget.setPointerCapture(event.pointerId);
+                      scale: viewportScale
+                    }
+                    event.currentTarget.setPointerCapture(event.pointerId)
                   }}
                   onPointerMove={(event) => {
-                    const drag = viewportDragRef.current;
+                    const drag = viewportDragRef.current
 
                     if (
                       !drag ||
                       !event.currentTarget.hasPointerCapture(event.pointerId)
                     ) {
-                      return;
+                      return
                     }
 
                     resizeViewport({
@@ -2281,9 +2281,9 @@ export function BrowserAppWorkspace({
                           3840,
                           Math.round(
                             drag.width +
-                              (x * (event.clientX - drag.x)) / drag.scale,
-                          ),
-                        ),
+                              (x * (event.clientX - drag.x)) / drag.scale
+                          )
+                        )
                       ),
                       height: Math.max(
                         1,
@@ -2291,60 +2291,58 @@ export function BrowserAppWorkspace({
                           2160,
                           Math.round(
                             drag.height +
-                              (y * (event.clientY - drag.y)) / drag.scale,
-                          ),
-                        ),
-                      ),
-                    });
+                              (y * (event.clientY - drag.y)) / drag.scale
+                          )
+                        )
+                      )
+                    })
                   }}
                   onPointerUp={(event) => {
                     if (
                       event.currentTarget.hasPointerCapture(event.pointerId)
                     ) {
-                      event.currentTarget.releasePointerCapture(
-                        event.pointerId,
-                      );
+                      event.currentTarget.releasePointerCapture(event.pointerId)
                     }
                   }}
                   onLostPointerCapture={() => {
-                    viewportDragRef.current = null;
+                    viewportDragRef.current = null
                   }}
                   onKeyDown={(event) => {
                     const dx =
                       x &&
-                      (event.key === "ArrowRight"
+                      (event.key === 'ArrowRight'
                         ? 10
-                        : event.key === "ArrowLeft"
+                        : event.key === 'ArrowLeft'
                           ? -10
-                          : 0);
+                          : 0)
 
                     const dy =
                       y &&
-                      (event.key === "ArrowDown"
+                      (event.key === 'ArrowDown'
                         ? 10
-                        : event.key === "ArrowUp"
+                        : event.key === 'ArrowUp'
                           ? -10
-                          : 0);
+                          : 0)
 
                     if (!dx && !dy) {
-                      return;
+                      return
                     }
 
-                    event.preventDefault();
+                    event.preventDefault()
                     resizeViewport({
                       width: Math.max(
                         1,
-                        Math.min(3840, viewportOverride.width + dx),
+                        Math.min(3840, viewportOverride.width + dx)
                       ),
                       height: Math.max(
                         1,
-                        Math.min(2160, viewportOverride.height + dy),
-                      ),
-                    });
+                        Math.min(2160, viewportOverride.height + dy)
+                      )
+                    })
                   }}
                 >
                   <span
-                    className={cn("rounded-sm border-current", grip)}
+                    className={cn('rounded-sm border-current', grip)}
                     aria-hidden="true"
                   />
                 </button>
@@ -2354,15 +2352,15 @@ export function BrowserAppWorkspace({
           <div
             className={cn(
               viewportOverride
-                ? "absolute top-5 left-5 origin-top-left"
-                : "relative size-full",
+                ? 'absolute top-5 left-5 origin-top-left'
+                : 'relative size-full'
             )}
             style={
               viewportOverride
                 ? {
                     width: viewportOverride.width,
                     height: viewportOverride.height,
-                    transform: `scale(${viewportScale})`,
+                    transform: `scale(${viewportScale})`
                   }
                 : undefined
             }
@@ -2383,28 +2381,28 @@ export function BrowserAppWorkspace({
                   maxLength={4_096}
                   value={findValue}
                   onChange={(event) => {
-                    const value = event.target.value;
-                    setFindValue(value);
-                    findInPage(value, true, false);
+                    const value = event.target.value
+                    setFindValue(value)
+                    findInPage(value, true, false)
                   }}
                   onKeyDown={(event) => {
                     if (
-                      event.key === "Escape" &&
+                      event.key === 'Escape' &&
                       !event.shiftKey &&
                       !event.altKey &&
                       !event.metaKey &&
                       !event.ctrlKey
                     ) {
-                      event.preventDefault();
-                      closeFind();
+                      event.preventDefault()
+                      closeFind()
                     } else if (
-                      event.key === "Enter" &&
+                      event.key === 'Enter' &&
                       !event.altKey &&
                       !event.metaKey &&
                       !event.ctrlKey
                     ) {
-                      event.preventDefault();
-                      findInPage(findValue, !event.shiftKey, true);
+                      event.preventDefault()
+                      findInPage(findValue, !event.shiftKey, true)
                     }
                   }}
                 />
@@ -2459,7 +2457,7 @@ export function BrowserAppWorkspace({
                 open={contextMenu !== null}
                 onOpenChange={(open) => {
                   if (!open) {
-                    dismissContext();
+                    dismissContext()
                   }
                 }}
               >
@@ -2472,278 +2470,278 @@ export function BrowserAppWorkspace({
                     ref={videoRef}
                     tabIndex={0}
                     className={cn(
-                      "block size-full touch-none select-none bg-zinc-950 object-contain outline-none",
-                      viewportOverride && "ring-1 ring-border",
+                      'block size-full touch-none select-none bg-zinc-950 object-contain outline-none',
+                      viewportOverride && 'ring-1 ring-border'
                     )}
                     aria-label="Browser viewport. Streamed page content is not available to assistive technology."
                     onFocus={onFocusSurface}
                     onPointerMove={(event) => {
-                      pointerTypeRef.current = event.pointerType;
+                      pointerTypeRef.current = event.pointerType
 
                       if (
                         contextRequestRef.current ||
                         contextRef.current ||
-                        event.pointerType !== "touch" ||
+                        event.pointerType !== 'touch' ||
                         !touchesRef.current.has(event.pointerId)
                       ) {
-                        return;
+                        return
                       }
 
                       touchesRef.current.set(event.pointerId, {
                         id: touchesRef.current.get(event.pointerId)!.id,
-                        ...point(event),
-                      });
+                        ...point(event)
+                      })
                       send({
-                        type: "touch",
-                        phase: "move",
-                        points: [...touchesRef.current.values()],
-                      });
+                        type: 'touch',
+                        phase: 'move',
+                        points: [...touchesRef.current.values()]
+                      })
                     }}
                     onMouseMove={(event) => {
                       if (
-                        pointerTypeRef.current === "touch" ||
+                        pointerTypeRef.current === 'touch' ||
                         contextRequestRef.current ||
                         contextRef.current ||
                         (!stateRef.current?.controlled &&
                           !pointerActiveRef.current)
                       ) {
-                        return;
+                        return
                       }
 
-                      send({ type: "pointer", phase: "move", ...point(event) });
+                      send({ type: 'pointer', phase: 'move', ...point(event) })
                     }}
                     onPointerLeave={(event) => {
-                      event.currentTarget.style.cursor = "default";
+                      event.currentTarget.style.cursor = 'default'
                     }}
                     onPointerDown={(event) => {
-                      pointerTypeRef.current = event.pointerType;
+                      pointerTypeRef.current = event.pointerType
 
                       if (
                         inputBlocked ||
                         !active ||
-                        (event.pointerType === "touch" &&
+                        (event.pointerType === 'touch' &&
                           touchesRef.current.size >= 10)
                       ) {
-                        return;
+                        return
                       }
 
-                      if (event.pointerType === "touch") {
-                        event.preventDefault();
+                      if (event.pointerType === 'touch') {
+                        event.preventDefault()
                       }
 
-                      onFocusSurface();
-                      event.currentTarget.focus({ preventScroll: true });
+                      onFocusSurface()
+                      event.currentTarget.focus({ preventScroll: true })
 
                       if (event.button === 2) {
-                        return;
+                        return
                       }
 
-                      event.currentTarget.setPointerCapture(event.pointerId);
+                      event.currentTarget.setPointerCapture(event.pointerId)
 
-                      if (event.pointerType === "touch") {
+                      if (event.pointerType === 'touch') {
                         if (touchesRef.current.size === 0) {
-                          send({ type: "takeControl" });
+                          send({ type: 'takeControl' })
                         }
 
                         // EXTERNAL: iOS pointer IDs can be negative or exceed int32, so
                         // send each contact as its lowest free slot instead.
                         const ids = new Set(
                           [...touchesRef.current.values()].map(
-                            (touch) => touch.id,
-                          ),
-                        );
+                            (touch) => touch.id
+                          )
+                        )
 
-                        let id = 0;
+                        let id = 0
 
                         while (ids.has(id)) {
-                          id++;
+                          id++
                         }
 
                         touchesRef.current.set(event.pointerId, {
                           id,
-                          ...point(event),
-                        });
+                          ...point(event)
+                        })
                         send({
-                          type: "touch",
-                          phase: "start",
-                          points: [...touchesRef.current.values()],
-                        });
+                          type: 'touch',
+                          phase: 'start',
+                          points: [...touchesRef.current.values()]
+                        })
 
-                        return;
+                        return
                       }
 
-                      pointerActiveRef.current = true;
-                      send({ type: "takeControl" });
+                      pointerActiveRef.current = true
+                      send({ type: 'takeControl' })
                     }}
                     onPointerUp={(event) => {
-                      event.preventDefault();
+                      event.preventDefault()
 
                       if (event.button === 2) {
-                        return;
+                        return
                       }
 
-                      if (event.pointerType === "touch") {
-                        const touch = touchesRef.current.get(event.pointerId);
+                      if (event.pointerType === 'touch') {
+                        const touch = touchesRef.current.get(event.pointerId)
 
                         if (touch) {
-                          touchesRef.current.delete(event.pointerId);
+                          touchesRef.current.delete(event.pointerId)
                           send({
-                            type: "touch",
-                            phase: "end",
-                            points: [{ id: touch.id, ...point(event) }],
-                          });
+                            type: 'touch',
+                            phase: 'end',
+                            points: [{ id: touch.id, ...point(event) }]
+                          })
                         }
 
                         if (
                           event.currentTarget.hasPointerCapture(event.pointerId)
                         ) {
                           event.currentTarget.releasePointerCapture(
-                            event.pointerId,
-                          );
+                            event.pointerId
+                          )
                         }
 
-                        return;
+                        return
                       }
 
-                      pointerActiveRef.current = false;
+                      pointerActiveRef.current = false
 
                       if (
                         event.currentTarget.hasPointerCapture(event.pointerId)
                       ) {
                         event.currentTarget.releasePointerCapture(
-                          event.pointerId,
-                        );
+                          event.pointerId
+                        )
                       }
                     }}
                     onMouseDown={(event) => {
-                      event.preventDefault();
+                      event.preventDefault()
 
                       // EXTERNAL: iOS Safari fires compatibility mouse events after a tap
                       // even when pointerdown is prevented, which would click twice.
                       if (
-                        pointerTypeRef.current === "touch" ||
+                        pointerTypeRef.current === 'touch' ||
                         event.button === 2 ||
                         inputBlocked ||
                         !active
                       ) {
-                        return;
+                        return
                       }
 
                       send({
-                        type: "pointer",
-                        phase: "down",
+                        type: 'pointer',
+                        phase: 'down',
                         ...point(event),
                         button: button(event.button),
-                        clickCount: Math.max(1, event.detail),
-                      });
+                        clickCount: Math.max(1, event.detail)
+                      })
                     }}
                     onMouseUp={(event) => {
-                      event.preventDefault();
+                      event.preventDefault()
 
                       if (
-                        pointerTypeRef.current === "touch" ||
+                        pointerTypeRef.current === 'touch' ||
                         event.button === 2
                       ) {
-                        return;
+                        return
                       }
 
                       send({
-                        type: "pointer",
-                        phase: "up",
+                        type: 'pointer',
+                        phase: 'up',
                         ...point(event),
                         button: button(event.button),
-                        clickCount: Math.max(1, event.detail),
-                      });
+                        clickCount: Math.max(1, event.detail)
+                      })
                     }}
                     onLostPointerCapture={(event) => {
                       if (touchesRef.current.has(event.pointerId)) {
-                        cancelTouches();
+                        cancelTouches()
                       }
                     }}
                     onPointerCancel={(event) => {
-                      if (event.pointerType === "touch") {
-                        cancelTouches();
+                      if (event.pointerType === 'touch') {
+                        cancelTouches()
 
-                        return;
+                        return
                       }
 
                       send({
-                        type: "pointer",
-                        phase: "up",
+                        type: 'pointer',
+                        phase: 'up',
                         ...point(event),
-                        button: button(event.button),
-                      });
-                      pointerActiveRef.current = false;
+                        button: button(event.button)
+                      })
+                      pointerActiveRef.current = false
 
                       if (
                         event.currentTarget.hasPointerCapture(event.pointerId)
                       ) {
                         event.currentTarget.releasePointerCapture(
-                          event.pointerId,
-                        );
+                          event.pointerId
+                        )
                       }
                     }}
                     onBlur={cancelTouches}
                     onContextMenu={(event) => {
                       if (!active || inputBlocked || !connectionRef.current) {
-                        event.preventDefault();
+                        event.preventDefault()
 
-                        return;
+                        return
                       }
 
-                      dismissContext();
-                      cancelTouches();
-                      const requestId = crypto.randomUUID();
-                      contextRequestRef.current = requestId;
+                      dismissContext()
+                      cancelTouches()
+                      const requestId = crypto.randomUUID()
+                      contextRequestRef.current = requestId
                       contextTimeoutRef.current = setTimeout(() => {
-                        dismissContext();
+                        dismissContext()
                         setError(
-                          "The browser context request timed out. Right-click to retry.",
-                        );
-                      }, 10_000);
-                      send({ type: "takeControl" });
-                      send({ type: "contextMenu", requestId, ...point(event) });
+                          'The browser context request timed out. Right-click to retry.'
+                        )
+                      }, 10_000)
+                      send({ type: 'takeControl' })
+                      send({ type: 'contextMenu', requestId, ...point(event) })
                     }}
-                    onKeyDown={(event) => key(event, "down")}
-                    onKeyUp={(event) => key(event, "up")}
+                    onKeyDown={(event) => key(event, 'down')}
+                    onKeyUp={(event) => key(event, 'up')}
                     onPaste={(event) => {
-                      event.preventDefault();
+                      event.preventDefault()
 
-                      if (!event.clipboardData.types.includes("text/plain")) {
+                      if (!event.clipboardData.types.includes('text/plain')) {
                         setError(
-                          "Paste was not sent. Only plain text is supported; copy text and try again.",
-                        );
+                          'Paste was not sent. Only plain text is supported; copy text and try again.'
+                        )
 
-                        return;
+                        return
                       }
 
-                      const text = event.clipboardData.getData("text/plain");
+                      const text = event.clipboardData.getData('text/plain')
 
                       if (text.length > BROWSER_MAX_INSERT_TEXT_LENGTH) {
                         setError(
-                          "Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.",
-                        );
+                          'Paste was not sent. The limit is 1,048,576 UTF-16 code units; paste smaller portions. No text was inserted.'
+                        )
 
-                        return;
+                        return
                       }
 
                       if (!connectionRef.current || inputBlocked) {
                         setError(
-                          "Paste was not sent. Wait for the browser to become available, then retry.",
-                        );
+                          'Paste was not sent. Wait for the browser to become available, then retry.'
+                        )
 
-                        return;
+                        return
                       }
 
-                      send({ type: "takeControl" });
-                      send({ type: "insertText", text });
+                      send({ type: 'takeControl' })
+                      send({ type: 'insertText', text })
                     }}
                   />
                 </ContextMenuTrigger>
                 <ContextMenuContent
                   onCloseAutoFocus={(event) => {
-                    event.preventDefault();
-                    focusPage();
+                    event.preventDefault()
+                    focusPage()
                   }}
                 >
                   {contextMenu?.hasSelection ? (
@@ -2751,8 +2749,8 @@ export function BrowserAppWorkspace({
                       <ContextMenuGroup>
                         <ContextMenuItem
                           onSelect={() => {
-                            dismissContext();
-                            copySelection();
+                            dismissContext()
+                            copySelection()
                           }}
                         >
                           Copy
@@ -2766,12 +2764,12 @@ export function BrowserAppWorkspace({
                       <ContextMenuGroup>
                         <ContextMenuItem
                           disabled={!contextMenu.canOpenLink}
-                          onSelect={() => contextAction("openLink")}
+                          onSelect={() => contextAction('openLink')}
                         >
                           Open Link in New Tab
                         </ContextMenuItem>
                         <ContextMenuItem
-                          onSelect={() => contextAction("copyLink")}
+                          onSelect={() => contextAction('copyLink')}
                         >
                           Copy Link Address
                         </ContextMenuItem>
@@ -2782,17 +2780,17 @@ export function BrowserAppWorkspace({
                   <ContextMenuGroup>
                     <ContextMenuItem
                       disabled={!state?.canGoBack}
-                      onSelect={() => contextAction("back")}
+                      onSelect={() => contextAction('back')}
                     >
                       Back
                     </ContextMenuItem>
                     <ContextMenuItem
                       disabled={!state?.canGoForward}
-                      onSelect={() => contextAction("forward")}
+                      onSelect={() => contextAction('forward')}
                     >
                       Forward
                     </ContextMenuItem>
-                    <ContextMenuItem onSelect={() => contextAction("reload")}>
+                    <ContextMenuItem onSelect={() => contextAction('reload')}>
                       Reload
                     </ContextMenuItem>
                   </ContextMenuGroup>
@@ -2802,7 +2800,7 @@ export function BrowserAppWorkspace({
                       <ContextMenuGroup>
                         <ContextMenuItem
                           disabled={!contextMenu?.canInspect}
-                          onSelect={() => contextAction("inspect")}
+                          onSelect={() => contextAction('inspect')}
                         >
                           Inspect Element
                         </ContextMenuItem>
@@ -2819,14 +2817,14 @@ export function BrowserAppWorkspace({
                 aria-hidden="true"
               />
             )}
-            {state === null || state.url === "about:blank" ? (
+            {state === null || state.url === 'about:blank' ? (
               <div
                 className="pointer-events-none absolute inset-0 bg-zinc-950"
                 aria-hidden="true"
               />
             ) : null}
             {!localBrowser &&
-            (state?.url ?? app.url) !== "about:blank" &&
+            (state?.url ?? app.url) !== 'about:blank' &&
             streamStatus &&
             !failure ? (
               <div
@@ -2864,8 +2862,8 @@ export function BrowserAppWorkspace({
                 anchor={pageSelect.anchor}
                 connection={connection}
                 onClose={() => {
-                  setPageSelect(null);
-                  focusPage();
+                  setPageSelect(null)
+                  focusPage()
                 }}
               />
             ) : null}
@@ -2903,11 +2901,11 @@ export function BrowserAppWorkspace({
                       size="sm"
                       onClick={() => {
                         void navigator.clipboard
-                          ?.writeText(failure.setup?.installCommand ?? "")
-                          .then(() => setInstallCommandCopied(true));
+                          ?.writeText(failure.setup?.installCommand ?? '')
+                          .then(() => setInstallCommandCopied(true))
                       }}
                     >
-                      {installCommandCopied ? "Copied" : "Copy"}
+                      {installCommandCopied ? 'Copied' : 'Copy'}
                     </Button>
                   </div>
                 ) : null}
@@ -2915,9 +2913,9 @@ export function BrowserAppWorkspace({
                   <Button
                     type="button"
                     onClick={() => {
-                      setFailure(null);
-                      setStreamStatus("Connecting to remote browser…");
-                      setConnectionRevision((value) => value + 1);
+                      setFailure(null)
+                      setStreamStatus('Connecting to remote browser…')
+                      setConnectionRevision((value) => value + 1)
                     }}
                   >
                     Retry
@@ -2937,10 +2935,10 @@ export function BrowserAppWorkspace({
                     Already installed?
                   </summary>
                   <p className="mt-2 text-pretty text-zinc-500 group-not-open:hidden">
-                    Chromium works too. {failure.message} Set{" "}
+                    Chromium works too. {failure.message} Set{' '}
                     <code className="font-mono text-zinc-300">
                       TREEPORT_BROWSER_EXECUTABLE
-                    </code>{" "}
+                    </code>{' '}
                     to the browser’s path and restart Treeport.
                   </p>
                 </details>
@@ -2959,9 +2957,9 @@ export function BrowserAppWorkspace({
                     type="button"
                     variant="outline"
                     onClick={() => {
-                      setFailure(null);
-                      setStreamStatus("Connecting to remote browser…");
-                      setConnectionRevision((value) => value + 1);
+                      setFailure(null)
+                      setStreamStatus('Connecting to remote browser…')
+                      setConnectionRevision((value) => value + 1)
                     }}
                   >
                     Retry
@@ -2983,11 +2981,11 @@ export function BrowserAppWorkspace({
             canConfigure={state.controlled && !failure}
             onConfigure={(settings) =>
               remoteConnectionRef.current?.configureVideo(settings) ??
-              Promise.reject(new Error("Browser stream is not connected."))
+              Promise.reject(new Error('Browser stream is not connected.'))
             }
           />
         ) : null}
       </div>
     </section>
-  );
+  )
 }

@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import path from "node:path";
+import fs from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import type {
   Browser,
   BrowserContext,
@@ -10,74 +10,74 @@ import type {
   FileChooser,
   Frame,
   Page,
-  Request,
-} from "playwright";
+  Request
+} from 'playwright'
 import {
   browserObservedUrlSchema,
-  browserUrlSchema,
-} from "@treeport/browser-host";
+  browserUrlSchema
+} from '@treeport/browser-host'
 import {
   browserContextResultSchema,
   browserSelectSchema,
   normalizeBrowserTitle,
-  normalizeBrowserFaviconUrl,
-} from "#protocol/browser";
-import { decodeUnknownOrNull } from "#protocol/schema";
-import { readBrowserPageMetadata } from "@treeport/browser-host/page-metadata";
+  normalizeBrowserFaviconUrl
+} from '#protocol/browser'
+import { decodeUnknownOrNull } from '#protocol/schema'
+import { readBrowserPageMetadata } from '@treeport/browser-host/page-metadata'
 import type {
   BrowserAgentCommand,
   BrowserClientMessage,
   BrowserContextResult,
   BrowserContextActionResult,
   BrowserRuntimeState,
-  BrowserSelect,
-} from "#protocol/browser";
-import type { BrowserClipboard } from "@treeport/browser-host/clipboard";
+  BrowserSelect
+} from '#protocol/browser'
+import type { BrowserClipboard } from '@treeport/browser-host/clipboard'
 
-import { ChromiumWebCodecsVideo } from "./chromium-webcodecs-video.ts";
-import { PlaywrightBrowserHost } from "./browser-page-host.ts";
-import { browserRuntime } from "./browser-runtime.ts";
-import { browserNavigation } from "./browser-navigation.ts";
-import { runBrowserScript } from "./browser-script.ts";
-import { browserKey, browserTouch, browserWheel } from "./browser-input.ts";
-import { installBrowserClipboardBridge } from "./browser-clipboard-bridge.ts";
-import { browserCursor } from "./browser-cursor.ts";
+import { ChromiumWebCodecsVideo } from './chromium-webcodecs-video.ts'
+import { PlaywrightBrowserHost } from './browser-page-host.ts'
+import { browserRuntime } from './browser-runtime.ts'
+import { browserNavigation } from './browser-navigation.ts'
+import { runBrowserScript } from './browser-script.ts'
+import { browserKey, browserTouch, browserWheel } from './browser-input.ts'
+import { installBrowserClipboardBridge } from './browser-clipboard-bridge.ts'
+import { browserCursor } from './browser-cursor.ts'
 
 export interface PlaywrightBrowserCallbacks {
-  state(state: BrowserRuntimeState): void;
-  clipboard(clipboard: BrowserClipboard): boolean;
-  fileChooser(chooser: FileChooser | null): void;
-  dialog(dialog: Dialog | null, agent: boolean): void;
-  select(select: BrowserSelect | null): void;
-  download(download: Download): void;
-  popup(url: string): void;
-  navigationError(message: string, source?: "video"): void;
-  crashed(message: string): void;
+  state(state: BrowserRuntimeState): void
+  clipboard(clipboard: BrowserClipboard): boolean
+  fileChooser(chooser: FileChooser | null): void
+  dialog(dialog: Dialog | null, agent: boolean): void
+  select(select: BrowserSelect | null): void
+  download(download: Download): void
+  popup(url: string): void
+  navigationError(message: string, source?: 'video'): void
+  crashed(message: string): void
 }
 
 export interface BrowserInstallStatus {
-  installed: boolean;
-  executablePath: string | null;
-  playwrightVersion: string;
-  browserRevision: string;
-  channel: "chromium" | "chrome";
-  launchReady: boolean;
-  launchError: string | null;
+  installed: boolean
+  executablePath: string | null
+  playwrightVersion: string
+  browserRevision: string
+  channel: 'chromium' | 'chrome'
+  launchReady: boolean
+  launchError: string | null
 }
 
 // EXTERNAL: CDP can resolve nodes inside closed shadow roots that composedPath hides.
 async function readContextLink(
   cdp: CDPSession,
-  backendNodeId: number,
+  backendNodeId: number
 ): Promise<string | null> {
-  const { object } = await cdp.send("DOM.resolveNode", { backendNodeId });
+  const { object } = await cdp.send('DOM.resolveNode', { backendNodeId })
 
   if (!object.objectId) {
-    return null;
+    return null
   }
 
   try {
-    const { result } = await cdp.send("Runtime.callFunctionOn", {
+    const { result } = await cdp.send('Runtime.callFunctionOn', {
       objectId: object.objectId,
       arguments: [{ objectId: object.objectId }],
       functionDeclaration: function (node: Node | null) {
@@ -86,121 +86,121 @@ async function readContextLink(
             node instanceof HTMLAnchorElement ||
             node instanceof HTMLAreaElement
           ) {
-            return node.href || null;
+            return node.href || null
           }
 
-          const root = node.getRootNode();
+          const root = node.getRootNode()
           node =
-            node.parentNode ?? (root instanceof ShadowRoot ? root.host : null);
+            node.parentNode ?? (root instanceof ShadowRoot ? root.host : null)
         }
 
-        return null;
+        return null
       }.toString(),
-      returnByValue: true,
-    });
+      returnByValue: true
+    })
 
     return decodeUnknownOrNull(
       browserContextResultSchema.fields.linkUrl,
-      result.value,
-    );
+      result.value
+    )
   } finally {
     await cdp
-      .send("Runtime.releaseObject", { objectId: object.objectId })
-      .catch(() => undefined);
+      .send('Runtime.releaseObject', { objectId: object.objectId })
+      .catch(() => undefined)
   }
 }
 
-const DEFAULT_VIEWPORT = { width: 1_280, height: 800 };
+const DEFAULT_VIEWPORT = { width: 1_280, height: 800 }
 
 export class PlaywrightBrowser {
-  private browser: Browser | null = null;
-  private context: BrowserContext | null = null;
-  private page: Page | null = null;
-  private cdp: CDPSession | null = null;
-  private video: ChromiumWebCodecsVideo | null = null;
-  private screencasting = false;
-  private frozenValue = false;
-  private freezingSupported = true;
-  private readonly pendingRequests = new Set<Request>();
-  private readonly pressedInputs = new Set<string>();
-  private networkActivityAt = Date.now();
-  private metadataUpdate: Promise<void> | null = null;
-  private closing = false;
-  private dialogHandler: ((dialog: Dialog) => void) | null = null;
-  private agentInteracting = false;
-  private readonly consoleMessages: string[] = [];
-  private readonly requests: string[] = [];
+  private browser: Browser | null = null
+  private context: BrowserContext | null = null
+  private page: Page | null = null
+  private cdp: CDPSession | null = null
+  private video: ChromiumWebCodecsVideo | null = null
+  private screencasting = false
+  private frozenValue = false
+  private freezingSupported = true
+  private readonly pendingRequests = new Set<Request>()
+  private readonly pressedInputs = new Set<string>()
+  private networkActivityAt = Date.now()
+  private metadataUpdate: Promise<void> | null = null
+  private closing = false
+  private dialogHandler: ((dialog: Dialog) => void) | null = null
+  private agentInteracting = false
+  private readonly consoleMessages: string[] = []
+  private readonly requests: string[] = []
   private contextMenu: {
-    id: string;
-    linkUrl: string | null;
-    backendNodeId: number | null;
-    targetId: string | null;
-    createdAt: number;
-  } | null = null;
+    id: string
+    linkUrl: string | null
+    backendNodeId: number | null
+    targetId: string | null
+    createdAt: number
+  } | null = null
   private selectMenu: {
-    requestId: string;
-    frame: Frame;
-    pageRequestId: string;
-  } | null = null;
-  private historyRevision = 0;
-  private pointerPoint: { x: number; y: number } | null = null;
-  private titleTimer: NodeJS.Timeout | null = null;
-  private faviconSource: string | null = null;
+    requestId: string
+    frame: Frame
+    pageRequestId: string
+  } | null = null
+  private historyRevision = 0
+  private pointerPoint: { x: number; y: number } | null = null
+  private titleTimer: NodeJS.Timeout | null = null
+  private faviconSource: string | null = null
   private stateValue: BrowserRuntimeState = {
-    url: "about:blank",
-    title: "",
+    url: 'about:blank',
+    title: '',
     faviconUrl: null,
     loading: false,
     canGoBack: false,
     canGoForward: false,
-    viewport: { ...DEFAULT_VIEWPORT },
-  };
+    viewport: { ...DEFAULT_VIEWPORT }
+  }
 
-  private readonly host: PlaywrightBrowserHost;
-  private readonly workspacePath: string;
-  private readonly callbacks: PlaywrightBrowserCallbacks;
+  private readonly host: PlaywrightBrowserHost
+  private readonly workspacePath: string
+  private readonly callbacks: PlaywrightBrowserCallbacks
 
   constructor(
     host: PlaywrightBrowserHost,
     workspacePath: string,
-    callbacks: PlaywrightBrowserCallbacks,
+    callbacks: PlaywrightBrowserCallbacks
   ) {
-    this.host = host;
-    this.workspacePath = workspacePath;
-    this.callbacks = callbacks;
+    this.host = host
+    this.workspacePath = workspacePath
+    this.callbacks = callbacks
   }
 
   static async status(cachePath: string): Promise<BrowserInstallStatus> {
-    const packageJson = await import("playwright/package.json", {
-      with: { type: "json" },
-    });
+    const packageJson = await import('playwright/package.json', {
+      with: { type: 'json' }
+    })
 
-    const runtime = await browserRuntime();
-    const { executablePath, channel } = runtime;
-    let launchError = runtime.launchError?.message ?? null;
-    const installed = executablePath !== null && launchError === null;
-    let browserRevision = "unknown";
-    let launchReady = false;
+    const runtime = await browserRuntime()
+    const { executablePath, channel } = runtime
+    let launchError = runtime.launchError?.message ?? null
+    const installed = executablePath !== null && launchError === null
+    let browserRevision = 'unknown'
+    let launchReady = false
 
     if (installed) {
-      await fs.mkdir(cachePath, { recursive: true });
+      await fs.mkdir(cachePath, { recursive: true })
 
       const statusProfile = await fs.mkdtemp(
-        path.join(cachePath, ".launch-status-"),
-      );
+        path.join(cachePath, '.launch-status-')
+      )
 
-      const host = new PlaywrightBrowserHost(statusProfile, null);
+      const host = new PlaywrightBrowserHost(statusProfile, null)
       await host
         .openPage()
         .then((lease) => {
-          browserRevision = lease.browser.version();
-          launchReady = true;
+          browserRevision = lease.browser.version()
+          launchReady = true
         })
         .catch((error) => {
-          launchError = error instanceof Error ? error.message : String(error);
-        });
-      await host.close();
-      await fs.rm(statusProfile, { recursive: true, force: true });
+          launchError = error instanceof Error ? error.message : String(error)
+        })
+      await host.close()
+      await fs.rm(statusProfile, { recursive: true, force: true })
     }
 
     return {
@@ -210,46 +210,46 @@ export class PlaywrightBrowser {
       browserRevision,
       channel,
       launchReady,
-      launchError,
-    };
+      launchError
+    }
   }
 
   get state() {
-    return this.stateValue;
+    return this.stateValue
   }
 
   get connected(): boolean {
-    return this.browser?.isConnected() ?? false;
+    return this.browser?.isConnected() ?? false
   }
 
   async devtoolsEndpoint(): Promise<string> {
-    this.pointerPoint = null;
+    this.pointerPoint = null
 
     if (!this.page || this.page.isClosed() || !this.cdp) {
-      throw new Error("The hosted browser page is not available.");
+      throw new Error('The hosted browser page is not available.')
     }
 
-    const endpoint = this.host.getDebuggingEndpoint();
+    const endpoint = this.host.getDebuggingEndpoint()
 
     if (!endpoint) {
-      throw new Error("The hosted browser debugger is not available.");
+      throw new Error('The hosted browser debugger is not available.')
     }
 
-    const { targetInfo } = await this.cdp.send("Target.getTargetInfo");
+    const { targetInfo } = await this.cdp.send('Target.getTargetInfo')
 
     if (!/^[a-fA-F0-9]{32}$/.test(targetInfo.targetId)) {
-      throw new Error("Chrome returned an invalid page target.");
+      throw new Error('Chrome returned an invalid page target.')
     }
 
-    const url = new URL(endpoint);
-    url.pathname = `/devtools/page/${targetInfo.targetId}`;
+    const url = new URL(endpoint)
+    url.pathname = `/devtools/page/${targetInfo.targetId}`
 
-    return url.href;
+    return url.href
   }
 
   async launch(): Promise<void> {
     if (this.browser) {
-      return;
+      return
     }
 
     const {
@@ -259,114 +259,114 @@ export class PlaywrightBrowser {
       extensionId,
       relay,
       input,
-      openCapturePage,
-    } = await this.host.openPage();
+      openCapturePage
+    } = await this.host.openPage()
 
-    this.context = context;
-    this.browser = browser;
-    browser.once("disconnected", () => {
+    this.context = context
+    this.browser = browser
+    browser.once('disconnected', () => {
       if (!this.closing) {
-        this.callbacks.crashed("The hosted browser process stopped.");
+        this.callbacks.crashed('The hosted browser process stopped.')
       }
-    });
+    })
 
-    this.page = page;
-    this.pointerPoint = null;
+    this.page = page
+    this.pointerPoint = null
     await installBrowserClipboardBridge(page, (clipboard) =>
-      this.callbacks.clipboard(clipboard),
-    );
+      this.callbacks.clipboard(clipboard)
+    )
     // EXTERNAL: While its tab is captured, Chromium keeps page fullscreen
     // within the tab, and leaving it resizes the page to the whole window,
     // discarding the emulated viewport. Playwright skips unchanged viewports,
     // so step through another size to reapply it.
-    await page.exposeBinding("__treeportFullscreenExited", async () => {
-      const { width, height } = this.stateValue.viewport;
-      await page.setViewportSize({ width, height: height + 1 });
-      await page.setViewportSize(this.stateValue.viewport);
-    });
+    await page.exposeBinding('__treeportFullscreenExited', async () => {
+      const { width, height } = this.stateValue.viewport
+      await page.setViewportSize({ width, height: height + 1 })
+      await page.setViewportSize(this.stateValue.viewport)
+    })
     await page.addInitScript(() => {
       if (window !== window.top) {
-        return;
+        return
       }
 
-      document.addEventListener("fullscreenchange", () => {
+      document.addEventListener('fullscreenchange', () => {
         if (!document.fullscreenElement) {
           // SAFETY: exposeBinding installs this page-scoped function before init scripts.
           void (
             window as typeof window & {
-              __treeportFullscreenExited(): Promise<void>;
+              __treeportFullscreenExited(): Promise<void>
             }
-          ).__treeportFullscreenExited();
+          ).__treeportFullscreenExited()
         }
-      });
-    });
+      })
+    })
     await page.exposeBinding(
-      "__treeportSelectOpen",
+      '__treeportSelectOpen',
       async ({ frame }, value) => {
-        const select = decodeUnknownOrNull(browserSelectSchema, value);
+        const select = decodeUnknownOrNull(browserSelectSchema, value)
 
         if (!select || this.agentInteracting || !this.cdp) {
-          return;
+          return
         }
 
-        let { x, y } = select;
+        let { x, y } = select
 
         if (frame !== page.mainFrame()) {
-          const box = await (await frame.frameElement()).boundingBox();
+          const box = await (await frame.frameElement()).boundingBox()
 
           if (!box) {
-            return;
+            return
           }
 
-          x += box.x;
-          y += box.y;
+          x += box.x
+          y += box.y
         }
 
         const { cssVisualViewport } = await this.cdp.send(
-          "Page.getLayoutMetrics",
-        );
+          'Page.getLayoutMetrics'
+        )
 
-        const { scale, offsetX, offsetY } = cssVisualViewport;
-        const requestId = randomUUID();
+        const { scale, offsetX, offsetY } = cssVisualViewport
+        const requestId = randomUUID()
 
-        this.closeSelect();
+        this.closeSelect()
         this.selectMenu = {
           requestId,
           frame,
-          pageRequestId: select.requestId,
-        };
+          pageRequestId: select.requestId
+        }
         this.callbacks.select({
           ...select,
           requestId,
           x: (x - offsetX) * scale,
           y: (y - offsetY) * scale,
           width: select.width * scale,
-          height: select.height * scale,
-        });
-      },
-    );
+          height: select.height * scale
+        })
+      }
+    )
     await page.addInitScript(() => {
       interface SelectWindow {
-        __treeportSelectOpen(select: BrowserSelect): Promise<void>;
+        __treeportSelectOpen(select: BrowserSelect): Promise<void>
       }
 
-      const selects = new Map<string, HTMLSelectElement>();
-      let nextId = 0;
+      const selects = new Map<string, HTMLSelectElement>()
+      let nextId = 0
 
       const open = (select: HTMLSelectElement): boolean => {
         if (select.multiple || select.size > 1 || select.disabled) {
-          return false;
+          return false
         }
 
-        nextId += 1;
-        selects.clear();
-        selects.set(String(nextId), select);
-        select.focus({ preventScroll: true });
-        const rect = select.getBoundingClientRect();
+        nextId += 1
+        selects.clear()
+        selects.set(String(nextId), select)
+        select.focus({ preventScroll: true })
+        const rect = select.getBoundingClientRect()
 
         // SAFETY: exposeBinding installs this page-scoped function before init scripts.
         void (window as typeof window & SelectWindow).__treeportSelectOpen({
-          type: "select",
+          type: 'select',
           requestId: String(nextId),
           x: rect.left,
           y: rect.top,
@@ -377,32 +377,32 @@ export class PlaywrightBrowser {
             const group =
               option.parentElement instanceof HTMLOptGroupElement
                 ? option.parentElement
-                : null;
+                : null
 
             return {
               label: option.label.slice(0, 1_024),
               group: group ? group.label.slice(0, 1_024) : null,
               disabled: option.disabled || (group?.disabled ?? false),
-              hidden: option.hidden !== false,
-            };
-          }),
-        });
+              hidden: option.hidden !== false
+            }
+          })
+        })
 
-        return true;
-      };
+        return true
+      }
 
       const target = (event: Event) =>
         event
           .composedPath()
           .find(
             (node): node is HTMLSelectElement =>
-              node instanceof HTMLSelectElement,
-          ) ?? null;
+              node instanceof HTMLSelectElement
+          ) ?? null
 
       // EXTERNAL: Chromium opens the popup as the default action of these
       // events. Bubble-phase listeners leave pages that prevent it alone.
-      window.addEventListener("mousedown", (event) => {
-        const select = target(event);
+      window.addEventListener('mousedown', (event) => {
+        const select = target(event)
 
         if (
           event.isTrusted &&
@@ -411,44 +411,44 @@ export class PlaywrightBrowser {
           select &&
           open(select)
         ) {
-          event.preventDefault();
+          event.preventDefault()
         }
-      });
-      window.addEventListener("keydown", (event) => {
-        const select = target(event);
+      })
+      window.addEventListener('keydown', (event) => {
+        const select = target(event)
 
         if (
           event.isTrusted &&
           !event.defaultPrevented &&
           select &&
-          (event.key === " " ||
-            event.key === "Enter" ||
-            event.key === "F4" ||
+          (event.key === ' ' ||
+            event.key === 'Enter' ||
+            event.key === 'F4' ||
             (event.altKey &&
-              (event.key === "ArrowDown" || event.key === "ArrowUp"))) &&
+              (event.key === 'ArrowDown' || event.key === 'ArrowUp'))) &&
           open(select)
         ) {
-          event.preventDefault();
+          event.preventDefault()
         }
-      });
+      })
 
-      const showPicker = HTMLSelectElement.prototype.showPicker;
+      const showPicker = HTMLSelectElement.prototype.showPicker
       HTMLSelectElement.prototype.showPicker = function () {
         if (!open(this)) {
-          showPicker.call(this);
+          showPicker.call(this)
         }
-      };
+      }
 
-      Object.defineProperty(window, "__treeportSelectChoose", {
+      Object.defineProperty(window, '__treeportSelectChoose', {
         value: (id: string, index: number | null) => {
-          const select = selects.get(id);
-          selects.delete(id);
+          const select = selects.get(id)
+          selects.delete(id)
 
           if (!select?.isConnected) {
-            return;
+            return
           }
 
-          select.focus({ preventScroll: true });
+          select.focus({ preventScroll: true })
 
           if (
             index === null ||
@@ -456,24 +456,24 @@ export class PlaywrightBrowser {
             !select.options[index] ||
             select.options[index].disabled
           ) {
-            return;
+            return
           }
 
-          select.selectedIndex = index;
+          select.selectedIndex = index
           select.dispatchEvent(
-            new Event("input", { bubbles: true, composed: true }),
-          );
-          select.dispatchEvent(new Event("change", { bubbles: true }));
-        },
-      });
-    });
-    await page.setViewportSize(this.stateValue.viewport);
-    const cdp = await context.newCDPSession(page);
-    this.cdp = cdp;
-    await this.host.setPageFocus(page, true);
-    await cdp.send("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-color-scheme", value: "dark" }],
-    });
+            new Event('input', { bubbles: true, composed: true })
+          )
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+      })
+    })
+    await page.setViewportSize(this.stateValue.viewport)
+    const cdp = await context.newCDPSession(page)
+    this.cdp = cdp
+    await this.host.setPageFocus(page, true)
+    await cdp.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'dark' }]
+    })
     this.video =
       relay &&
       new ChromiumWebCodecsVideo(
@@ -483,290 +483,290 @@ export class PlaywrightBrowser {
         input,
         () => this.host.getDebuggingEndpoint(),
         (message) => {
-          this.screencasting = false;
-          void this.video?.stop();
-          this.callbacks.navigationError(message, "video");
-        },
-      );
-    page.on("popup", (candidate) => {
+          this.screencasting = false
+          void this.video?.stop()
+          this.callbacks.navigationError(message, 'video')
+        }
+      )
+    page.on('popup', (candidate) => {
       void (async () => {
         const supportedUrl = (value: string): string | null => {
-          const parsed = decodeUnknownOrNull(browserUrlSchema, value);
+          const parsed = decodeUnknownOrNull(browserUrlSchema, value)
 
-          return parsed === null ? null : new URL(parsed).href;
-        };
+          return parsed === null ? null : new URL(parsed).href
+        }
 
-        let popupUrl = supportedUrl(candidate.url());
+        let popupUrl = supportedUrl(candidate.url())
 
         if (!popupUrl) {
           await candidate
             .waitForURL((url) => supportedUrl(url.href) !== null, {
-              timeout: 5_000,
+              timeout: 5_000
             })
-            .catch(() => undefined);
-          popupUrl = supportedUrl(candidate.url());
+            .catch(() => undefined)
+          popupUrl = supportedUrl(candidate.url())
         }
 
         if (popupUrl) {
-          this.callbacks.popup(popupUrl);
+          this.callbacks.popup(popupUrl)
         } else {
           this.callbacks.navigationError(
-            "The popup did not supply a supported HTTP, HTTPS, or local file URL.",
-          );
+            'The popup did not supply a supported HTTP, HTTPS, or local file URL.'
+          )
         }
 
-        await candidate.close().catch(() => undefined);
-      })();
-    });
-    page.on("download", (download) => this.callbacks.download(download));
-    page.on("filechooser", (chooser) => this.callbacks.fileChooser(chooser));
-    page.on("close", () => {
+        await candidate.close().catch(() => undefined)
+      })()
+    })
+    page.on('download', (download) => this.callbacks.download(download))
+    page.on('filechooser', (chooser) => this.callbacks.fileChooser(chooser))
+    page.on('close', () => {
       if (!this.closing) {
-        this.callbacks.crashed("The hosted browser page closed.");
+        this.callbacks.crashed('The hosted browser page closed.')
       }
-    });
+    })
 
-    page.on("console", (message) => {
-      this.consoleMessages.push(`${message.type()}: ${message.text()}`);
-
-      if (this.consoleMessages.length > 1_000) {
-        this.consoleMessages.shift();
-      }
-    });
-    page.on("pageerror", (error) => {
-      this.consoleMessages.push(`error: ${error.message}`);
+    page.on('console', (message) => {
+      this.consoleMessages.push(`${message.type()}: ${message.text()}`)
 
       if (this.consoleMessages.length > 1_000) {
-        this.consoleMessages.shift();
+        this.consoleMessages.shift()
       }
-    });
-    page.on("websocket", (socket) => {
-      this.networkActivityAt = Date.now();
-      socket.on("framesent", () => {
-        this.networkActivityAt = Date.now();
-      });
-      socket.on("framereceived", () => {
-        this.networkActivityAt = Date.now();
-      });
-      socket.on("close", () => {
-        this.networkActivityAt = Date.now();
-      });
-    });
-    page.on("requestfinished", (request) => {
-      this.pendingRequests.delete(request);
-      this.networkActivityAt = Date.now();
-    });
-    page.on("request", (request) => {
-      this.pendingRequests.add(request);
-      this.networkActivityAt = Date.now();
-      this.requests.push(`${request.method()} ${request.url()}`);
+    })
+    page.on('pageerror', (error) => {
+      this.consoleMessages.push(`error: ${error.message}`)
+
+      if (this.consoleMessages.length > 1_000) {
+        this.consoleMessages.shift()
+      }
+    })
+    page.on('websocket', (socket) => {
+      this.networkActivityAt = Date.now()
+      socket.on('framesent', () => {
+        this.networkActivityAt = Date.now()
+      })
+      socket.on('framereceived', () => {
+        this.networkActivityAt = Date.now()
+      })
+      socket.on('close', () => {
+        this.networkActivityAt = Date.now()
+      })
+    })
+    page.on('requestfinished', (request) => {
+      this.pendingRequests.delete(request)
+      this.networkActivityAt = Date.now()
+    })
+    page.on('request', (request) => {
+      this.pendingRequests.add(request)
+      this.networkActivityAt = Date.now()
+      this.requests.push(`${request.method()} ${request.url()}`)
 
       if (this.requests.length > 2_000) {
-        this.requests.shift();
+        this.requests.shift()
       }
 
       if (
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
       ) {
-        this.contextMenu = null;
-        this.closeSelect();
-        this.faviconSource = null;
+        this.contextMenu = null
+        this.closeSelect()
+        this.faviconSource = null
         this.updateState({
           url: request.url(),
           loading: true,
-          faviconUrl: null,
-        });
+          faviconUrl: null
+        })
       }
-    });
-    page.on("requestfailed", (request) => {
-      this.pendingRequests.delete(request);
-      this.networkActivityAt = Date.now();
+    })
+    page.on('requestfailed', (request) => {
+      this.pendingRequests.delete(request)
+      this.networkActivityAt = Date.now()
 
       if (
         request.isNavigationRequest() &&
         request.frame() === page.mainFrame()
       ) {
-        this.updateState({ loading: false });
+        this.updateState({ loading: false })
       }
-    });
-    page.on("framedetached", (frame) => {
-      this.callbacks.fileChooser(null);
-      this.contextMenu = null;
+    })
+    page.on('framedetached', (frame) => {
+      this.callbacks.fileChooser(null)
+      this.contextMenu = null
 
       if (this.selectMenu?.frame === frame) {
-        this.closeSelect();
+        this.closeSelect()
       }
-    });
-    page.on("framenavigated", (frame) => {
-      this.callbacks.fileChooser(null);
-      this.contextMenu = null;
-      this.pointerPoint = null;
+    })
+    page.on('framenavigated', (frame) => {
+      this.callbacks.fileChooser(null)
+      this.contextMenu = null
+      this.pointerPoint = null
 
       if (this.selectMenu?.frame === frame) {
-        this.closeSelect();
+        this.closeSelect()
       }
 
       if (frame === page.mainFrame()) {
-        void this.refreshPageState();
+        void this.refreshPageState()
       }
-    });
-    page.on("domcontentloaded", () => void this.refreshPageState());
-    page.on("load", () => {
-      this.updateState({ loading: false });
-      void this.refreshPageState();
-    });
+    })
+    page.on('domcontentloaded', () => void this.refreshPageState())
+    page.on('load', () => {
+      this.updateState({ loading: false })
+      void this.refreshPageState()
+    })
     this.dialogHandler = (dialog) => {
-      if (dialog.type() === "beforeunload") {
-        void dialog.dismiss().catch(() => undefined);
+      if (dialog.type() === 'beforeunload') {
+        void dialog.dismiss().catch(() => undefined)
       } else {
-        this.callbacks.dialog(dialog, this.agentInteracting);
+        this.callbacks.dialog(dialog, this.agentInteracting)
       }
-    };
+    }
 
-    page.on("dialog", this.dialogHandler);
-    page.once("crash", () =>
-      this.callbacks.crashed("The hosted browser page crashed."),
-    );
-    this.cdp.on("Page.javascriptDialogClosed", () =>
-      this.callbacks.dialog(null, false),
-    );
-    this.cdp.on("Page.navigatedWithinDocument", () => {
-      this.contextMenu = null;
-      void this.refreshPageState();
-    });
-    await this.cdp.send("Page.enable");
+    page.on('dialog', this.dialogHandler)
+    page.once('crash', () =>
+      this.callbacks.crashed('The hosted browser page crashed.')
+    )
+    this.cdp.on('Page.javascriptDialogClosed', () =>
+      this.callbacks.dialog(null, false)
+    )
+    this.cdp.on('Page.navigatedWithinDocument', () => {
+      this.contextMenu = null
+      void this.refreshPageState()
+    })
+    await this.cdp.send('Page.enable')
     this.titleTimer = setInterval(() => {
       if (this.frozenValue || this.metadataUpdate) {
-        return;
+        return
       }
 
       this.metadataUpdate = page
         .evaluate(readBrowserPageMetadata)
         .then(async ({ title, faviconUrl }) => {
           if (normalizeBrowserTitle(title) !== this.stateValue.title) {
-            this.updateState({ title });
+            this.updateState({ title })
           }
 
-          const source = normalizeBrowserFaviconUrl(faviconUrl);
+          const source = normalizeBrowserFaviconUrl(faviconUrl)
 
           if (source === this.faviconSource) {
-            return;
+            return
           }
 
-          this.faviconSource = source;
-          this.updateState({ faviconUrl: null });
+          this.faviconSource = source
+          this.updateState({ faviconUrl: null })
 
           if (!source) {
-            return;
+            return
           }
 
-          let icon = source.startsWith("data:") ? source : null;
+          let icon = source.startsWith('data:') ? source : null
 
           if (!icon) {
             const response = await this.context?.request
               .get(source, { timeout: 3_000 })
-              .catch(() => null);
+              .catch(() => null)
 
             if (response) {
-              const type = response.headers()["content-type"]?.split(";")[0];
+              const type = response.headers()['content-type']?.split(';')[0]
 
               const body =
-                response.ok() && type?.startsWith("image/")
+                response.ok() && type?.startsWith('image/')
                   ? await response.body().catch(() => null)
-                  : null;
+                  : null
 
               if (body && body.length <= 256 * 1024) {
                 icon = normalizeBrowserFaviconUrl(
-                  `data:${type};base64,${body.toString("base64")}`,
-                );
+                  `data:${type};base64,${body.toString('base64')}`
+                )
               }
 
-              await response.dispose();
+              await response.dispose()
             }
           }
 
           if (this.faviconSource === source && !page.isClosed()) {
-            this.updateState({ faviconUrl: icon });
+            this.updateState({ faviconUrl: icon })
           }
         })
         .catch(() => undefined)
         .finally(() => {
-          this.metadataUpdate = null;
-        });
-    }, 500);
-    this.titleTimer.unref();
-    await this.refreshPageState();
+          this.metadataUpdate = null
+        })
+    }, 500)
+    this.titleTimer.unref()
+    await this.refreshPageState()
   }
 
   private closeSelect(): void {
     if (this.selectMenu) {
-      this.selectMenu = null;
-      this.callbacks.select(null);
+      this.selectMenu = null
+      this.callbacks.select(null)
     }
   }
 
   private updateState(patch: Partial<BrowserRuntimeState>): void {
-    const observedUrl = patch.url ?? this.stateValue.url;
+    const observedUrl = patch.url ?? this.stateValue.url
 
     // EXTERNAL: Chromium error pages are not navigable protocol URLs. Keep the last
     // supported address (including a failed navigation's target) for recovery.
     const url =
-      observedUrl === "about:blank" ||
+      observedUrl === 'about:blank' ||
       decodeUnknownOrNull(browserObservedUrlSchema, observedUrl) !== null
         ? observedUrl
-        : this.stateValue.url;
+        : this.stateValue.url
 
     this.stateValue = {
       ...this.stateValue,
       ...patch,
       url,
       title: normalizeBrowserTitle(patch.title ?? this.stateValue.title),
-      viewport: patch.viewport ?? this.stateValue.viewport,
-    };
-    this.callbacks.state(this.stateValue);
+      viewport: patch.viewport ?? this.stateValue.viewport
+    }
+    this.callbacks.state(this.stateValue)
   }
 
   private async refreshPageState(): Promise<void> {
-    const page = this.page;
-    const cdp = this.cdp;
+    const page = this.page
+    const cdp = this.cdp
 
     if (!page || !cdp || page.isClosed()) {
-      return;
+      return
     }
 
-    const revision = ++this.historyRevision;
+    const revision = ++this.historyRevision
 
     const [title, history] = await Promise.all([
-      page.title().catch(() => ""),
-      cdp.send("Page.getNavigationHistory").catch(() => ({
+      page.title().catch(() => ''),
+      cdp.send('Page.getNavigationHistory').catch(() => ({
         currentIndex: 0,
         entries: [
           {
             id: 0,
             url: page.url(),
-            userTypedURL: "",
-            title: "",
-            transitionType: "typed" as const,
-          },
-        ],
-      })),
-    ]);
+            userTypedURL: '',
+            title: '',
+            transitionType: 'typed' as const
+          }
+        ]
+      }))
+    ])
 
     if (revision !== this.historyRevision || page.isClosed()) {
-      return;
+      return
     }
 
     this.updateState({
       url: page.url(),
       title,
       canGoBack: history.currentIndex > 0,
-      canGoForward: history.currentIndex < history.entries.length - 1,
-    });
+      canGoForward: history.currentIndex < history.entries.length - 1
+    })
   }
 
   get frozen(): boolean {
-    return this.frozenValue;
+    return this.frozenValue
   }
 
   get idle(): boolean {
@@ -776,12 +776,12 @@ export class PlaywrightBrowser {
       this.pendingRequests.size === 0 &&
       this.pressedInputs.size === 0 &&
       Date.now() - this.networkActivityAt >= 30_000
-    );
+    )
   }
 
   async setFrozen(frozen: boolean): Promise<void> {
-    const cdp = this.cdp;
-    const page = this.page;
+    const cdp = this.cdp
+    const page = this.page
 
     if (
       !cdp ||
@@ -789,149 +789,149 @@ export class PlaywrightBrowser {
       this.frozenValue === frozen ||
       (frozen && !this.idle)
     ) {
-      return;
+      return
     }
 
     if (frozen) {
-      this.frozenValue = true;
-      await this.metadataUpdate;
+      this.frozenValue = true
+      await this.metadataUpdate
 
       if (!this.idle) {
-        this.frozenValue = false;
+        this.frozenValue = false
 
-        return;
+        return
       }
 
-      await this.host.setPageFocus(page, false);
+      await this.host.setPageFocus(page, false)
 
       if (!this.idle) {
-        await this.host.setPageFocus(page, true);
-        this.frozenValue = false;
+        await this.host.setPageFocus(page, true)
+        this.frozenValue = false
 
-        return;
+        return
       }
 
       await cdp
-        .send("Page.setWebLifecycleState", { state: "frozen" })
+        .send('Page.setWebLifecycleState', { state: 'frozen' })
         .catch(async () => {
           // EXTERNAL: Unsupported Chromium versions keep the page alive; never close it.
-          this.freezingSupported = false;
-          this.frozenValue = false;
-          await this.host.setPageFocus(page, true);
-        });
+          this.freezingSupported = false
+          this.frozenValue = false
+          await this.host.setPageFocus(page, true)
+        })
     } else {
-      await cdp.send("Page.setWebLifecycleState", { state: "active" });
-      await this.host.setPageFocus(page, true);
-      this.frozenValue = false;
+      await cdp.send('Page.setWebLifecycleState', { state: 'active' })
+      await this.host.setPageFocus(page, true)
+      this.frozenValue = false
     }
   }
 
   async cursor(point: { x: number; y: number }) {
-    return this.page ? browserCursor(this.page, point) : ("default" as const);
+    return this.page ? browserCursor(this.page, point) : ('default' as const)
   }
 
   webcodecsViewer(viewerId: string) {
     if (!this.video) {
-      throw new Error("Browser video is unavailable.");
+      throw new Error('Browser video is unavailable.')
     }
 
-    return this.video.viewerSource(viewerId);
+    return this.video.viewerSource(viewerId)
   }
 
   async closeVideoViewer(viewerId: string): Promise<void> {
-    await this.video?.closeViewer(viewerId);
+    await this.video?.closeViewer(viewerId)
   }
 
   controlVideo(viewerId: string | null): void {
-    this.video?.control(viewerId);
+    this.video?.control(viewerId)
   }
 
   async setScreencasting(enabled: boolean): Promise<void> {
-    const page = this.page;
-    const video = this.video;
+    const page = this.page
+    const video = this.video
 
     if (!page || page.isClosed() || !video || enabled === this.screencasting) {
-      return;
+      return
     }
 
-    this.screencasting = enabled;
+    this.screencasting = enabled
 
     if (!enabled) {
-      await video.stop();
+      await video.stop()
 
-      return;
+      return
     }
 
     await video
       .start(this.stateValue.viewport.width, this.stateValue.viewport.height)
       .catch((error) => {
-        this.screencasting = false;
-        throw error;
-      });
+        this.screencasting = false
+        throw error
+      })
   }
 
   async copy(): Promise<BrowserClipboard | null> {
     if (!this.page || this.page.isClosed()) {
-      throw new Error("The hosted browser page is unavailable.");
+      throw new Error('The hosted browser page is unavailable.')
     }
 
-    return this.host.copy(this.page);
+    return this.host.copy(this.page)
   }
 
   async command(
-    message: BrowserClientMessage,
+    message: BrowserClientMessage
   ): Promise<void | BrowserContextResult | BrowserContextActionResult> {
-    const page = this.page;
+    const page = this.page
 
     if (!page || page.isClosed()) {
-      throw new Error("The hosted browser page is unavailable.");
+      throw new Error('The hosted browser page is unavailable.')
     }
 
-    if (message.type === "key" || message.type === "pointer") {
+    if (message.type === 'key' || message.type === 'pointer') {
       const input =
-        message.type === "key"
+        message.type === 'key'
           ? `key:${message.key}`
-          : `pointer:${message.button ?? "left"}`;
+          : `pointer:${message.button ?? 'left'}`
 
-      if (message.phase === "down") {
-        this.pressedInputs.add(input);
-      } else if (message.phase === "up") {
-        this.pressedInputs.delete(input);
+      if (message.phase === 'down') {
+        this.pressedInputs.add(input)
+      } else if (message.phase === 'up') {
+        this.pressedInputs.delete(input)
       }
     }
 
-    if (message.type !== "pointer" && message.type !== "wheel") {
-      this.pointerPoint = null;
+    if (message.type !== 'pointer' && message.type !== 'wheel') {
+      this.pointerPoint = null
     }
 
-    if (message.type === "dismissContext") {
+    if (message.type === 'dismissContext') {
       if (this.contextMenu?.id === message.contextId) {
-        this.contextMenu = null;
+        this.contextMenu = null
       }
 
-      return;
+      return
     }
 
-    if (message.type === "contextMenu") {
+    if (message.type === 'contextMenu') {
       const context: NonNullable<typeof this.contextMenu> = {
         id: randomUUID(),
         linkUrl: null,
         backendNodeId: null,
         targetId: null,
-        createdAt: Date.now(),
-      };
+        createdAt: Date.now()
+      }
 
-      this.contextMenu = context;
+      this.contextMenu = context
 
       const observers = await Promise.all(
         page.frames().map((frame) =>
           frame
             .evaluateHandle(() => {
               interface CapturedContextMenu {
-                event: MouseEvent | null;
-                linkUrl: string | null;
-                hasSelection: boolean;
-                listener: (event: MouseEvent) => void;
+                event: MouseEvent | null
+                linkUrl: string | null
+                hasSelection: boolean
+                listener: (event: MouseEvent) => void
               }
 
               const captured: CapturedContextMenu = {
@@ -940,69 +940,69 @@ export class PlaywrightBrowser {
                 hasSelection: false,
                 listener: (event: MouseEvent) => {
                   if (!event.isTrusted) {
-                    return;
+                    return
                   }
 
-                  captured.event = event;
+                  captured.event = event
 
                   // EXTERNAL: Document selections exclude text selected inside
                   // inputs and textareas, so check the focused field as well.
-                  const field = document.activeElement;
+                  const field = document.activeElement
                   captured.hasSelection =
                     (field instanceof HTMLInputElement ||
                     field instanceof HTMLTextAreaElement
                       ? (field.selectionStart ?? 0) !==
                         (field.selectionEnd ?? 0)
-                      : false) || !(window.getSelection()?.isCollapsed ?? true);
+                      : false) || !(window.getSelection()?.isCollapsed ?? true)
 
                   for (const node of event.composedPath()) {
                     if (
                       node instanceof HTMLAnchorElement ||
                       node instanceof HTMLAreaElement
                     ) {
-                      captured.linkUrl = node.href || null;
-                      break;
+                      captured.linkUrl = node.href || null
+                      break
                     }
                   }
-                },
-              };
+                }
+              }
 
-              window.addEventListener("contextmenu", captured.listener, {
-                capture: true,
-              });
+              window.addEventListener('contextmenu', captured.listener, {
+                capture: true
+              })
 
-              return captured;
+              return captured
             })
             .then((observer) => ({ frame, observer }))
-            .catch(() => null),
-        ),
-      );
+            .catch(() => null)
+        )
+      )
 
       let captured: {
-        prevented: boolean;
-        linkUrl: string | null;
-        hasSelection: boolean;
-      } | null = null;
+        prevented: boolean
+        linkUrl: string | null
+        hasSelection: boolean
+      } | null = null
 
       try {
         const hit = await this.cdp
-          ?.send("DOM.getNodeForLocation", {
+          ?.send('DOM.getNodeForLocation', {
             x: Math.round(message.x),
             y: Math.round(message.y),
-            includeUserAgentShadowDOM: true,
+            includeUserAgentShadowDOM: true
           })
-          .catch(() => null);
+          .catch(() => null)
 
-        context.backendNodeId = hit?.backendNodeId ?? null;
+        context.backendNodeId = hit?.backendNodeId ?? null
 
         if (this.cdp && context.backendNodeId !== null) {
           context.linkUrl = await readContextLink(
             this.cdp,
-            context.backendNodeId,
-          ).catch(() => null);
+            context.backendNodeId
+          ).catch(() => null)
         }
 
-        await page.mouse.click(message.x, message.y, { button: "right" });
+        await page.mouse.click(message.x, message.y, { button: 'right' })
 
         for (const entry of observers) {
           const value = await entry?.observer
@@ -1013,44 +1013,44 @@ export class PlaywrightBrowser {
                     linkUrl: observed.linkUrl,
                     hasSelection: observed.hasSelection,
                     x: observed.event.clientX,
-                    y: observed.event.clientY,
+                    y: observed.event.clientY
                   }
-                : null,
+                : null
             )
-            .catch(() => null);
+            .catch(() => null)
 
           if (value && entry) {
-            captured = value;
+            captured = value
 
             if (entry.frame !== page.mainFrame()) {
               // EXTERNAL: Page-target hit testing stops at out-of-process iframes. Keep
               // that frame's target identity to route inspection in DevTools.
               const frameCdp = await this.context
                 ?.newCDPSession(entry.frame)
-                .catch(() => null);
+                .catch(() => null)
 
               if (frameCdp) {
                 try {
                   const frameHit = await frameCdp
-                    .send("DOM.getNodeForLocation", {
+                    .send('DOM.getNodeForLocation', {
                       x: Math.round(value.x),
                       y: Math.round(value.y),
-                      includeUserAgentShadowDOM: true,
+                      includeUserAgentShadowDOM: true
                     })
-                    .catch(() => null);
+                    .catch(() => null)
 
-                  const info = await frameCdp.send("Target.getTargetInfo");
-                  context.backendNodeId = frameHit?.backendNodeId ?? null;
-                  context.targetId = info.targetInfo.targetId;
+                  const info = await frameCdp.send('Target.getTargetInfo')
+                  context.backendNodeId = frameHit?.backendNodeId ?? null
+                  context.targetId = info.targetInfo.targetId
 
                   if (context.backendNodeId !== null) {
                     context.linkUrl = await readContextLink(
                       frameCdp,
-                      context.backendNodeId,
-                    ).catch(() => null);
+                      context.backendNodeId
+                    ).catch(() => null)
                   }
                 } finally {
-                  await frameCdp.detach().catch(() => undefined);
+                  await frameCdp.detach().catch(() => undefined)
                 }
               }
             }
@@ -1061,50 +1061,50 @@ export class PlaywrightBrowser {
           observers.map(async (entry) => {
             await entry?.observer
               .evaluate((observed) => {
-                window.removeEventListener("contextmenu", observed.listener, {
-                  capture: true,
-                });
+                window.removeEventListener('contextmenu', observed.listener, {
+                  capture: true
+                })
               })
-              .catch(() => undefined);
-            await entry?.observer.dispose().catch(() => undefined);
-          }),
-        );
+              .catch(() => undefined)
+            await entry?.observer.dispose().catch(() => undefined)
+          })
+        )
       }
 
       if (!captured || captured.prevented || this.contextMenu !== context) {
-        this.contextMenu = null;
+        this.contextMenu = null
 
         return {
-          type: "contextResult",
+          type: 'contextResult',
           requestId: message.requestId,
           contextId: null,
           linkUrl: null,
           canOpenLink: false,
           canInspect: false,
-          hasSelection: false,
-        };
+          hasSelection: false
+        }
       }
 
       context.linkUrl = decodeUnknownOrNull(
         browserContextResultSchema.fields.linkUrl,
-        captured.linkUrl ?? context.linkUrl,
-      );
+        captured.linkUrl ?? context.linkUrl
+      )
 
       return {
-        type: "contextResult",
+        type: 'contextResult',
         requestId: message.requestId,
         contextId: context.id,
         linkUrl: context.linkUrl,
         canOpenLink:
           decodeUnknownOrNull(browserUrlSchema, context.linkUrl) !== null,
         canInspect: context.backendNodeId !== null,
-        hasSelection: captured.hasSelection,
-      };
+        hasSelection: captured.hasSelection
+      }
     }
 
-    if (message.type === "contextAction") {
-      const context = this.contextMenu;
-      this.contextMenu = null;
+    if (message.type === 'contextAction') {
+      const context = this.contextMenu
+      this.contextMenu = null
 
       if (
         !context ||
@@ -1112,458 +1112,458 @@ export class PlaywrightBrowser {
         Date.now() - context.createdAt > 30_000
       ) {
         throw new Error(
-          "The browser context menu is stale. Right-click the page again.",
-        );
+          'The browser context menu is stale. Right-click the page again.'
+        )
       }
 
-      if (message.action === "openLink") {
-        const url = decodeUnknownOrNull(browserUrlSchema, context.linkUrl);
+      if (message.action === 'openLink') {
+        const url = decodeUnknownOrNull(browserUrlSchema, context.linkUrl)
 
         if (!url) {
-          throw new Error("This link cannot be opened in Browser.");
+          throw new Error('This link cannot be opened in Browser.')
         }
 
-        this.callbacks.popup(url);
+        this.callbacks.popup(url)
       } else if (
-        message.action !== "copyLink" &&
-        message.action !== "inspect"
+        message.action !== 'copyLink' &&
+        message.action !== 'inspect'
       ) {
-        await this.command({ type: message.action });
+        await this.command({ type: message.action })
       }
 
       return {
-        type: "contextActionResult",
+        type: 'contextActionResult',
         requestId: message.requestId,
         action: message.action,
-        linkUrl: message.action === "copyLink" ? context.linkUrl : null,
+        linkUrl: message.action === 'copyLink' ? context.linkUrl : null,
         backendNodeId:
-          message.action === "inspect" ? context.backendNodeId : null,
-        targetId: message.action === "inspect" ? context.targetId : null,
-      };
+          message.action === 'inspect' ? context.backendNodeId : null,
+        targetId: message.action === 'inspect' ? context.targetId : null
+      }
     }
 
-    if (message.type === "selectResponse") {
-      const menu = this.selectMenu;
+    if (message.type === 'selectResponse') {
+      const menu = this.selectMenu
 
       if (menu?.requestId !== message.requestId) {
-        return;
+        return
       }
 
-      this.closeSelect();
+      this.closeSelect()
       await menu.frame
         .evaluate(
           ([id, index]) =>
             // SAFETY: The page init script defines this function in every frame.
             (
               window as typeof window & {
-                __treeportSelectChoose(id: string, index: number | null): void;
+                __treeportSelectChoose(id: string, index: number | null): void
               }
             ).__treeportSelectChoose(id, index),
-          [menu.pageRequestId, message.index] as const,
+          [menu.pageRequestId, message.index] as const
         )
-        .catch(() => undefined);
+        .catch(() => undefined)
 
-      return;
+      return
     }
 
-    if (message.type !== "videoOffer") {
-      this.contextMenu = null;
+    if (message.type !== 'videoOffer') {
+      this.contextMenu = null
     }
 
-    if (message.type === "navigate") {
-      this.updateState({ loading: true });
+    if (message.type === 'navigate') {
+      this.updateState({ loading: true })
       await browserNavigation(
         page,
-        () => page.goto(message.url, { waitUntil: "commit" }),
+        () => page.goto(message.url, { waitUntil: 'commit' }),
         null,
-        "page",
+        'page'
       ).catch((error) => {
-        this.updateState({ loading: false });
-        throw error;
-      });
-      this.updateState({ url: page.url() });
-      void this.refreshPageState();
+        this.updateState({ loading: false })
+        throw error
+      })
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
 
-      return;
+      return
     }
 
-    if (message.type === "back") {
+    if (message.type === 'back') {
       await browserNavigation(
         page,
-        () => page.goBack({ waitUntil: "commit" }),
+        () => page.goBack({ waitUntil: 'commit' }),
         null,
-        "page",
-      );
-      this.updateState({ url: page.url() });
-      void this.refreshPageState();
+        'page'
+      )
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
 
-      return;
+      return
     }
 
-    if (message.type === "forward") {
+    if (message.type === 'forward') {
       await browserNavigation(
         page,
-        () => page.goForward({ waitUntil: "commit" }),
+        () => page.goForward({ waitUntil: 'commit' }),
         null,
-        "page",
-      );
-      this.updateState({ url: page.url() });
-      void this.refreshPageState();
+        'page'
+      )
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
 
-      return;
+      return
     }
 
-    if (message.type === "reload") {
-      this.updateState({ loading: true });
+    if (message.type === 'reload') {
+      this.updateState({ loading: true })
       await browserNavigation(
         page,
-        () => page.reload({ waitUntil: "commit" }),
+        () => page.reload({ waitUntil: 'commit' }),
         null,
-        "page",
+        'page'
       ).catch((error) => {
-        this.updateState({ loading: false });
-        throw error;
-      });
-      this.updateState({ url: page.url() });
-      void this.refreshPageState();
+        this.updateState({ loading: false })
+        throw error
+      })
+      this.updateState({ url: page.url() })
+      void this.refreshPageState()
 
-      return;
+      return
     }
 
-    if (message.type === "stop") {
-      await this.cdp?.send("Page.stopLoading");
-      this.updateState({ loading: false });
+    if (message.type === 'stop') {
+      await this.cdp?.send('Page.stopLoading')
+      this.updateState({ loading: false })
 
-      return;
+      return
     }
 
-    if (message.type === "resize") {
+    if (message.type === 'resize') {
       if (
         this.state.viewport.width === message.width &&
         this.state.viewport.height === message.height
       ) {
-        return;
+        return
       }
 
       await page.setViewportSize({
         width: message.width,
-        height: message.height,
-      });
+        height: message.height
+      })
       this.updateState({
-        viewport: { width: message.width, height: message.height },
-      });
+        viewport: { width: message.width, height: message.height }
+      })
 
       if (this.screencasting) {
-        await this.video?.start(message.width, message.height);
+        await this.video?.start(message.width, message.height)
       }
 
-      return;
+      return
     }
 
-    if (message.type === "pointer") {
+    if (message.type === 'pointer') {
       const { cssVisualViewport } = await this.cdp!.send(
-        "Page.getLayoutMetrics",
-      );
+        'Page.getLayoutMetrics'
+      )
 
-      const x = message.x / cssVisualViewport.scale;
-      const y = message.y / cssVisualViewport.scale;
+      const x = message.x / cssVisualViewport.scale
+      const y = message.y / cssVisualViewport.scale
 
       if (
-        message.phase === "move" ||
+        message.phase === 'move' ||
         this.pointerPoint?.x !== x ||
         this.pointerPoint?.y !== y
       ) {
-        this.pointerPoint = { x, y };
+        this.pointerPoint = { x, y }
         await page.mouse.move(x, y).catch((error) => {
-          this.pointerPoint = null;
-          throw error;
-        });
+          this.pointerPoint = null
+          throw error
+        })
       }
 
-      if (message.phase === "down") {
+      if (message.phase === 'down') {
         await page.mouse.down({
-          button: message.button ?? "left",
-          clickCount: message.clickCount ?? 1,
-        });
-      } else if (message.phase === "up") {
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
+      } else if (message.phase === 'up') {
         await page.mouse.up({
-          button: message.button ?? "left",
-          clickCount: message.clickCount ?? 1,
-        });
+          button: message.button ?? 'left',
+          clickCount: message.clickCount ?? 1
+        })
       }
 
-      return;
+      return
     }
 
-    if (message.type === "touch") {
-      await browserTouch(this.cdp!, message);
+    if (message.type === 'touch') {
+      await browserTouch(this.cdp!, message)
 
-      return;
+      return
     }
 
-    if (message.type === "wheel") {
-      await browserWheel(this.cdp!, message);
+    if (message.type === 'wheel') {
+      await browserWheel(this.cdp!, message)
 
-      return;
+      return
     }
 
-    if (message.type === "key") {
-      await browserKey(page, message);
+    if (message.type === 'key') {
+      await browserKey(page, message)
 
-      return;
+      return
     }
 
-    if (message.type === "insertText") {
-      await page.keyboard.insertText(message.text);
+    if (message.type === 'insertText') {
+      await page.keyboard.insertText(message.text)
 
-      return;
+      return
     }
 
-    if (message.type === "find") {
+    if (message.type === 'find') {
       await page.evaluate(({ text, forward, findNext }) => {
         if (!findNext) {
-          window.getSelection()?.removeAllRanges();
+          window.getSelection()?.removeAllRanges()
         }
 
         // @ts-expect-error -- Chromium supplies the nonstandard window.find API.
-        window.find(text, false, !forward, true, false, true, false);
-      }, message);
+        window.find(text, false, !forward, true, false, true, false)
+      }, message)
 
-      return;
+      return
     }
 
-    if (message.type === "stopFind") {
-      await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    if (message.type === 'stopFind') {
+      await page.evaluate(() => window.getSelection()?.removeAllRanges())
     }
   }
 
   async agentCommand(
-    input: Exclude<BrowserAgentCommand, { command: `dialog-${string}` }>,
+    input: Exclude<BrowserAgentCommand, { command: `dialog-${string}` }>
   ): Promise<string> {
-    this.pointerPoint = null;
-    const page = this.page;
+    this.pointerPoint = null
+    const page = this.page
 
     if (!page || page.isClosed()) {
-      throw new Error("The hosted browser page is unavailable.");
+      throw new Error('The hosted browser page is unavailable.')
     }
 
-    const target = (value: string) => page.locator(`aria-ref=${value}`);
+    const target = (value: string) => page.locator(`aria-ref=${value}`)
 
     // EXTERNAL: Playwright actions do not settle while a page dialog is open.
     const interact = async (action: () => Promise<void>) => {
-      let opened: () => void = () => undefined;
+      let opened: () => void = () => undefined
 
       const dialog = new Promise<void>((resolve) => {
-        opened = resolve;
-      });
+        opened = resolve
+      })
 
       const onDialog = (candidate: Dialog) => {
-        if (candidate.type() !== "beforeunload") {
-          opened();
+        if (candidate.type() !== 'beforeunload') {
+          opened()
         }
-      };
+      }
 
-      this.agentInteracting = true;
-      page.on("dialog", onDialog);
+      this.agentInteracting = true
+      page.on('dialog', onDialog)
 
       try {
-        const result = action();
-        result.catch(() => undefined);
-        await Promise.race([result, dialog]);
+        const result = action()
+        result.catch(() => undefined)
+        await Promise.race([result, dialog])
       } finally {
-        this.agentInteracting = false;
-        page.off("dialog", onDialog);
+        this.agentInteracting = false
+        page.off('dialog', onDialog)
       }
-    };
+    }
 
-    if (input.command === "snapshot") {
+    if (input.command === 'snapshot') {
       // eslint-disable-next-line anti-slop/no-reflect-apply -- Playwright exposes CLI element references through this internal snapshot option.
-      return Reflect.apply(page.ariaSnapshot, page, [{ mode: "ai" }]);
+      return Reflect.apply(page.ariaSnapshot, page, [{ mode: 'ai' }])
     }
 
-    if (input.command === "click") {
-      await interact(() => target(input.args[0]).click());
+    if (input.command === 'click') {
+      await interact(() => target(input.args[0]).click())
 
-      return `Clicked ${input.args[0]}`;
+      return `Clicked ${input.args[0]}`
     }
 
-    if (input.command === "fill") {
-      await interact(() => target(input.args[0]).fill(input.args[1]));
+    if (input.command === 'fill') {
+      await interact(() => target(input.args[0]).fill(input.args[1]))
 
-      return `Filled ${input.args[0]}`;
+      return `Filled ${input.args[0]}`
     }
 
-    if (input.command === "press") {
-      await interact(() => page.keyboard.press(input.args[0]));
+    if (input.command === 'press') {
+      await interact(() => page.keyboard.press(input.args[0]))
 
-      return `Pressed ${input.args[0]}`;
+      return `Pressed ${input.args[0]}`
     }
 
-    if (input.command === "console") {
-      const minimum = input.args[0] ?? "info";
-      const levels = ["debug", "info", "warning", "error"];
-      const minimumIndex = Math.max(0, levels.indexOf(minimum));
+    if (input.command === 'console') {
+      const minimum = input.args[0] ?? 'info'
+      const levels = ['debug', 'info', 'warning', 'error']
+      const minimumIndex = Math.max(0, levels.indexOf(minimum))
 
       return (
         this.consoleMessages
           .filter((line) => {
-            const level = line.slice(0, line.indexOf(":"));
-            const index = levels.indexOf(level);
+            const level = line.slice(0, line.indexOf(':'))
+            const index = levels.indexOf(level)
 
-            return index < 0 || index >= minimumIndex;
+            return index < 0 || index >= minimumIndex
           })
-          .join("\n") || "No console messages."
-      );
+          .join('\n') || 'No console messages.'
+      )
     }
 
-    if (input.command === "requests") {
-      return this.requests.join("\n") || "No network requests.";
+    if (input.command === 'requests') {
+      return this.requests.join('\n') || 'No network requests.'
     }
 
-    if (input.command === "run") {
-      let output = "A page dialog opened before the script finished.";
+    if (input.command === 'run') {
+      let output = 'A page dialog opened before the script finished.'
 
       await interact(async () => {
-        output = await runBrowserScript(page, input.args[0]);
-      });
-      await this.refreshPageState();
+        output = await runBrowserScript(page, input.args[0])
+      })
+      await this.refreshPageState()
 
-      return output;
+      return output
     }
 
-    if (input.command === "screenshot") {
+    if (input.command === 'screenshot') {
       const screenshotPath = path.join(
         this.workspacePath,
-        `screenshot-${Date.now()}.png`,
-      );
+        `screenshot-${Date.now()}.png`
+      )
 
-      await page.screenshot({ path: screenshotPath });
+      await page.screenshot({ path: screenshotPath })
 
-      return `Screenshot saved to ${screenshotPath}`;
+      return `Screenshot saved to ${screenshotPath}`
     }
 
-    if (input.command === "goto") {
-      await browserNavigation(page, () => page.goto(input.args[0]));
-      await this.refreshPageState();
+    if (input.command === 'goto') {
+      await browserNavigation(page, () => page.goto(input.args[0]))
+      await this.refreshPageState()
 
-      return `Navigated to ${page.url()}`;
+      return `Navigated to ${page.url()}`
     }
 
-    if (input.command === "go-back") {
-      await browserNavigation(page, () => page.goBack());
-      await this.refreshPageState();
+    if (input.command === 'go-back') {
+      await browserNavigation(page, () => page.goBack())
+      await this.refreshPageState()
 
-      return `Navigated to ${page.url()}`;
+      return `Navigated to ${page.url()}`
     }
 
-    if (input.command === "go-forward") {
-      await browserNavigation(page, () => page.goForward());
-      await this.refreshPageState();
+    if (input.command === 'go-forward') {
+      await browserNavigation(page, () => page.goForward())
+      await this.refreshPageState()
 
-      return `Navigated to ${page.url()}`;
+      return `Navigated to ${page.url()}`
     }
 
-    await browserNavigation(page, () => page.reload());
-    await this.refreshPageState();
+    await browserNavigation(page, () => page.reload())
+    await this.refreshPageState()
 
-    return `Reloaded ${page.url()}`;
+    return `Reloaded ${page.url()}`
   }
 
   async requestClose(force: boolean): Promise<boolean> {
-    const page = this.page;
+    const page = this.page
 
     if (!page || page.isClosed()) {
-      return true;
+      return true
     }
 
-    const previousClosing = this.closing;
-    this.closing = true;
+    const previousClosing = this.closing
+    this.closing = true
 
     if (this.dialogHandler) {
-      page.off("dialog", this.dialogHandler);
+      page.off('dialog', this.dialogHandler)
     }
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let closeHandler: (() => void) | null = null;
-    let dialogHandler: ((dialog: Dialog) => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let closeHandler: (() => void) | null = null
+    let dialogHandler: ((dialog: Dialog) => void) | null = null
 
     try {
       return await new Promise<boolean>((resolve, reject) => {
-        closeHandler = () => resolve(true);
+        closeHandler = () => resolve(true)
         dialogHandler = (dialog) => {
-          if (dialog.type() !== "beforeunload") {
-            void dialog.dismiss().catch(reject);
+          if (dialog.type() !== 'beforeunload') {
+            void dialog.dismiss().catch(reject)
 
-            return;
+            return
           }
 
           if (force) {
-            void dialog.accept().catch(reject);
+            void dialog.accept().catch(reject)
           } else {
-            void dialog.dismiss().then(() => resolve(false), reject);
+            void dialog.dismiss().then(() => resolve(false), reject)
           }
-        };
+        }
 
-        page.once("close", closeHandler);
-        page.on("dialog", dialogHandler);
+        page.once('close', closeHandler)
+        page.on('dialog', dialogHandler)
         timer = setTimeout(
           // EXTERNAL: runBeforeUnload does not cancel on timeout. Keep the session
           // occupied until close or dismissal, rather than race fresh commands
           // against a close that Chromium may still complete later.
           () =>
             this.callbacks.navigationError(
-              "The page has not finished closing. Browser commands are waiting for it to close or dismiss its beforeunload dialog.",
+              'The page has not finished closing. Browser commands are waiting for it to close or dismiss its beforeunload dialog.'
             ),
-          5_000,
-        );
-        timer.unref();
-        void page.close({ runBeforeUnload: true }).catch(reject);
-      });
+          5_000
+        )
+        timer.unref()
+        void page.close({ runBeforeUnload: true }).catch(reject)
+      })
     } finally {
       if (timer) {
-        clearTimeout(timer);
+        clearTimeout(timer)
       }
 
       if (closeHandler) {
-        page.off("close", closeHandler);
+        page.off('close', closeHandler)
       }
 
       if (dialogHandler) {
-        page.off("dialog", dialogHandler);
+        page.off('dialog', dialogHandler)
       }
 
       if (!page.isClosed() && this.dialogHandler) {
-        page.on("dialog", this.dialogHandler);
+        page.on('dialog', this.dialogHandler)
       }
 
-      this.closing = previousClosing;
+      this.closing = previousClosing
     }
   }
 
   async close(): Promise<void> {
     if (this.closing) {
-      return;
+      return
     }
 
-    this.closing = true;
-    await this.setScreencasting(false).catch(() => undefined);
-    await this.video?.stop().catch(() => undefined);
+    this.closing = true
+    await this.setScreencasting(false).catch(() => undefined)
+    await this.video?.stop().catch(() => undefined)
 
     if (this.titleTimer) {
-      clearInterval(this.titleTimer);
-      this.titleTimer = null;
+      clearInterval(this.titleTimer)
+      this.titleTimer = null
     }
 
-    const page = this.page;
+    const page = this.page
 
     if (page) {
-      await this.host.closePage(page);
+      await this.host.closePage(page)
     }
 
-    this.page = null;
-    this.context = null;
-    this.cdp = null;
-    this.video = null;
-    this.browser = null;
+    this.page = null
+    this.context = null
+    this.cdp = null
+    this.video = null
+    this.browser = null
   }
 }
