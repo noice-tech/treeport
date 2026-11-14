@@ -65,11 +65,10 @@ interface ToolPickerActionsProps {
 }
 
 function definitionSource(definition: WebAppDefinition): string {
-  return definition.source.type === 'project'
+  return definition.source.type === 'project' ||
+    definition.source.scope === 'project'
     ? 'Project'
-    : `${definition.source.scope === 'project' ? 'Project' : 'Global'} · ${
-        definition.source.packageId
-      }`
+    : 'Global'
 }
 
 function ToolPickerActions({

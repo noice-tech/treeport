@@ -458,9 +458,10 @@ export function NewAppDialog({
                         {definition.title}
                       </span>
                       <span className="min-w-0 max-w-1/2 truncate text-zinc-500">
-                        {definition.source.type === 'project'
+                        {definition.source.type === 'project' ||
+                        definition.source.scope === 'project'
                           ? 'Project'
-                          : `${definition.source.scope === 'project' ? 'Project' : 'Global'} · ${definition.source.packageId}`}
+                          : 'Global'}
                       </span>
                     </Button>
                   )
