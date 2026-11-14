@@ -129,9 +129,29 @@ export function PushNotificationControl() {
     }
   }
 
-  if (window.treeportDesktop || checking || subscription) {
+  const disable = async (current: PushSubscription) => {
+    setPending(true)
+
+    try {
+      await parseResponse(rpc.api.push.unsubscribe.$post(current.endpoint))
+      await current.unsubscribe()
+      setSubscription(null)
+    } catch (error) {
+      notifyError(error, {
+        operation: 'disable push notifications'
+      })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (window.treeportDesktop || checking) {
     return null
   }
+
+  const [pendingLabel, idleLabel] = subscription
+    ? ['Disabling notifications…', 'Disable push notifications']
+    : ['Enabling notifications…', 'Enable push notifications']
 
   return (
     <div className="flex shrink-0 flex-col gap-2 px-3 py-3 sm:py-2">
@@ -143,10 +163,10 @@ export function PushNotificationControl() {
           disabled={pending || denied}
           aria-busy={pending}
           onClick={() => {
-            void enable()
+            void (subscription ? disable(subscription) : enable())
           }}
         >
-          {pending ? 'Enabling notifications…' : 'Enable push notifications'}
+          {pending ? pendingLabel : idleLabel}
           <span
             className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
             aria-hidden="true"
