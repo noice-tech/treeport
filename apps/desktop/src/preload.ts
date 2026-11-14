@@ -373,6 +373,9 @@ const desktopBridge = Object.freeze({
   },
   setTheme(theme: TreeportTheme) {
     ipcRenderer.send('desktop:set-theme', theme)
+  },
+  setUpdatesPaused(paused: boolean) {
+    ipcRenderer.send('desktop:set-updates-paused', paused)
   }
 } satisfies Required<DesktopBridge>)
 

@@ -32,6 +32,7 @@ export class HostSession {
   readonly runtime: DesktopRuntime
   readonly browser: BrowserWebviewPolicy
   connection: ConnectionState
+  updatesPaused = false
   private generation = 0
   private connectionFiber: Fiber.RuntimeFiber<void> | null = null
   private phase: HostSessionPhase = 'idle'
@@ -90,6 +91,7 @@ export class HostSession {
       )
     )
     renderer.on('did-navigate', (_event, url, status) => {
+      this.updatesPaused = false
       this.documentGeneration =
         status < 400 && this.ownsUrl(url) ? this.generation : null
 
@@ -148,6 +150,7 @@ export class HostSession {
       }
     })
     renderer.on('render-process-gone', () => {
+      this.updatesPaused = false
       this.documentGeneration = null
       this.transition('lost')
       this.connect(this.lastUrl)

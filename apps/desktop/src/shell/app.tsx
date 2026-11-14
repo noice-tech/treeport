@@ -13,6 +13,7 @@ import { OpenOnPhoneDialog } from './open-on-phone-dialog'
 import { selectedComputer, useShellState } from './shell-state'
 import { Button } from './ui'
 import { UpdateChip } from './update-chip'
+import { UpdatesPausedChip } from './updates-paused-chip'
 
 function Titlebar() {
   const state = useShellState()
@@ -87,6 +88,7 @@ export function App() {
       updateId(computerId, update.startedAt) === updateOpenId
   )
 
+  const [updatesPausedOpen, setUpdatesPausedOpen] = useState(false)
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
   useEffect(
@@ -107,6 +109,11 @@ export function App() {
   const showTitlebar = state !== null
 
   const connectionReady = state?.connection.status === 'ready' && computer
+  const updatesPaused = Boolean(connectionReady && state?.updatesPaused)
+
+  if (!updatesPaused && updatesPausedOpen) {
+    setUpdatesPausedOpen(false)
+  }
 
   const darwin = state?.platform === 'darwin'
   const iconAccent = state?.theme.accent ?? null
@@ -149,9 +156,9 @@ export function App() {
 
   useEffect(() => {
     window.treeportShell.setOverlayOpen(
-      dialog !== null || selectorOpen || updateOpen
+      dialog !== null || selectorOpen || updateOpen || updatesPausedOpen
     )
-  }, [dialog, selectorOpen, updateOpen])
+  }, [dialog, selectorOpen, updateOpen, updatesPausedOpen])
 
   const captureTerminalSelectionPointer = (
     event: ReactPointerEvent<HTMLDivElement>
@@ -216,6 +223,13 @@ export function App() {
               />
             )
           })}
+          {updatesPaused ? (
+            <UpdatesPausedChip
+              align={state.platform === 'darwin' ? 'end' : 'center'}
+              open={updatesPausedOpen}
+              onOpenChange={setUpdatesPausedOpen}
+            />
+          ) : null}
           <ComputerSelector
             state={state}
             open={selectorOpen}

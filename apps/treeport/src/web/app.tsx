@@ -1281,6 +1281,17 @@ function WorkspaceApp() {
     return () => window.clearTimeout(timer)
   }, [syncDegraded])
 
+  const terminalReportsOutage =
+    Boolean(selectedTerminal) &&
+    !(isMobile && drawerOpen) &&
+    !(appsPanelOpen && (isMobile || appsPanelFullView))
+
+  const updatesPaused = showSyncDegraded && !terminalReportsOutage
+
+  useEffect(() => {
+    desktopBridge?.setUpdatesPaused?.(updatesPaused)
+  }, [desktopBridge, updatesPaused])
+
   const retainedApps = projects
     .flatMap((project) => project.worktrees)
     .flatMap((worktree) => worktree.workspaceItems)
@@ -1981,6 +1992,7 @@ function WorkspaceApp() {
         }
       />
       <WorkspaceSidebar
+        updatesPaused={!desktopBridge && updatesPaused}
         settingsMenu={
           <SettingsMenu
             onManageLaunchers={(trigger) =>
@@ -2197,10 +2209,7 @@ function WorkspaceApp() {
       {browserPermissionPrompt &&
       (browserPermissionPrompt.appId !== activeAppId || !appsPanelOpen) ? (
         <div
-          className={cn(
-            'fixed right-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-100 shadow-2xl ring-1 ring-white/10',
-            showSyncDegraded ? 'bottom-20' : 'bottom-4'
-          )}
+          className="fixed right-4 bottom-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-100 shadow-2xl ring-1 ring-white/10"
           role="status"
         >
           <span className="min-w-0 break-all">
@@ -2221,16 +2230,6 @@ function WorkspaceApp() {
           >
             Review
           </button>
-        </div>
-      ) : null}
-      {showSyncDegraded ? (
-        <div
-          className="fixed right-4 bottom-4 z-70 flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg bg-zinc-800 p-3 text-sm text-zinc-300 shadow-2xl ring-1 ring-white/10"
-          role="status"
-          inert={isMobile && drawerOpen ? true : undefined}
-          aria-hidden={isMobile && drawerOpen ? true : undefined}
-        >
-          <span>Updates paused; showing the last known project state.</span>
         </div>
       ) : null}
       <OpenProjectDialog
