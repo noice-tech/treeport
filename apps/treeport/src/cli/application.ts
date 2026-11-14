@@ -1982,6 +1982,7 @@ async function main(args: string[]): Promise<void> {
     .option('--json', 'emit machine-readable JSON')
 
   projectRemoveCommand.action(async (identifier: string) => {
+
     const { force } = projectRemoveCommand.opts<{ force?: boolean }>()
     const exactRootPath =
       identifier === '.' ? null : await canonical(identifier)
