@@ -47,15 +47,10 @@ const SAFE_ATTRIBUTE_NAMES = new Set([
   'treeport.app.id',
   'treeport.request.id',
   'treeport.terminal.id',
-  'treeport.terminal.launch_kind',
   'treeport.terminal.pending_output_bytes',
   'treeport.terminal.snapshot_bytes',
-  'treeport.terminal_host.method',
-  'treeport.terminal_host.queue_wait_ms',
   'treeport.worktree.id',
   'treeport.web_app.reused',
-  'treeport.web_app.development',
-  'treeport.web_app.build_pending',
   'treeport.web_app.resolution'
 ])
 

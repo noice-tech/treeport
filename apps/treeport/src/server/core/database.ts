@@ -573,7 +573,6 @@ export function mapProject(
     mainWorktreePath: row.mainWorktreePath,
     defaultBranch: row.defaultBranch,
     originUrl: row.originUrl,
-    color: row.color,
     isHome: row.isHome === 1,
     availability: { state: 'available', message: null },
     worktrees: worktreeRows.map((worktree) =>

@@ -65,7 +65,7 @@ function ProjectMark({
   project,
   className
 }: {
-  project: { id: string; name: string; color: ProjectColor | null }
+  project: { id: string; name: string }
   className?: string
 }) {
   const [, rerender] = useState(0)
@@ -76,8 +76,7 @@ function ProjectMark({
     hash = (hash * 31 + character.charCodeAt(0)) | 0
   }
 
-  const color =
-    project.color ?? PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]!
+  const color = PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]!
 
   return (
     <span
@@ -596,7 +595,7 @@ export function ProjectSwitcher({
                         onClick={() => selectRecentProject(project)}
                       >
                         <ProjectMark
-                          project={{ ...project, color: null }}
+                          project={project}
                           className="size-4 rounded-[0.3125rem] text-[0.5625rem]/none opacity-60 grayscale-50"
                         />
                         <span className="truncate font-medium text-zinc-200">

@@ -2,7 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
-import { fixture } from './service.integration-fixture.ts'
+import {
+  createCompletedWorktree,
+  fixture
+} from './service.integration-fixture.ts'
 import { MutationLocks } from './services/infrastructure/mutation-locks.ts'
 
 describe('terminal operations', () => {
@@ -49,9 +52,11 @@ describe('terminal operations', () => {
     const project = await service.registerProject(main)
     const mainTree = project.worktrees[0]!
 
-    const linkedTree = (
-      await service.createWorktree(project.id, 'existing-tree', 'default')
-    ).worktree
+    const linkedTree = await createCompletedWorktree(
+      service,
+      project.id,
+      'existing-tree'
+    )
 
     const sessionsBefore = [...runner.sessions.keys()]
     let releaseCreation!: () => void
@@ -89,9 +94,6 @@ describe('terminal operations', () => {
       expect([...runner.sessions.keys()]).toEqual(
         expect.arrayContaining(sessionsBefore)
       )
-      await expect(
-        service.updateProjectColor(project.id, 'blue')
-      ).resolves.toMatchObject({ color: 'blue' })
       await service.closeProject(project.id)
       expect(await service.listProjects()).toEqual([])
       await service.openProject(project.id)
@@ -322,9 +324,11 @@ describe('terminal operations', () => {
     const { main, runner, service } = await fixture()
     const project = await service.registerProject(main)
 
-    const blockingWorktree = (
-      await service.createWorktree(project.id, 'blocking-cleanup', 'default')
-    ).worktree
+    const blockingWorktree = await createCompletedWorktree(
+      service,
+      project.id,
+      'blocking-cleanup'
+    )
 
     await fs.mkdir(path.join(blockingWorktree.path, '.treeport'))
     await fs.writeFile(
@@ -343,9 +347,11 @@ describe('terminal operations', () => {
       })
     )
 
-    const targetWorktree = (
-      await service.createWorktree(project.id, 'terminal-target', 'default')
-    ).worktree
+    const targetWorktree = await createCompletedWorktree(
+      service,
+      project.id,
+      'terminal-target'
+    )
 
     const terminal = await service.createTerminal(targetWorktree.id, 'Extra')
 
@@ -390,9 +396,6 @@ describe('terminal operations', () => {
           )
         }
 
-        await expect(
-          service.updateProjectColor(project.id, 'blue')
-        ).resolves.toMatchObject({ color: 'blue' })
         await service.closeProject(project.id)
         expect(await service.listProjects()).toEqual([])
         expect(await service.listRecentProjects()).toEqual([

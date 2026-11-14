@@ -659,7 +659,6 @@ export interface ZedService {
   readonly resolveWorktreePath: typeof resolveZedWorktreePath
   readonly prepareWorktreeWrapper: typeof prepareZedWorktreeWrapper
   readonly loadLauncherDefinitions: typeof loadZedLauncherDefinitions
-  readonly resolveCreateWorktreeSetupTasks: typeof resolveZedCreateWorktreeSetupTasks
 }
 
 export class Zed extends Context.Tag('treeport/Zed')<Zed, ZedService>() {}
@@ -667,6 +666,5 @@ export class Zed extends Context.Tag('treeport/Zed')<Zed, ZedService>() {}
 export const ZedLive = Layer.succeed(Zed, {
   resolveWorktreePath: resolveZedWorktreePath,
   prepareWorktreeWrapper: prepareZedWorktreeWrapper,
-  loadLauncherDefinitions: loadZedLauncherDefinitions,
-  resolveCreateWorktreeSetupTasks: resolveZedCreateWorktreeSetupTasks
+  loadLauncherDefinitions: loadZedLauncherDefinitions
 })

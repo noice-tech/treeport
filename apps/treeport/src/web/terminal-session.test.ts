@@ -150,7 +150,6 @@ function ghosttySnapshot(output = '', cols = 100, rows = 30): string {
       progress: null,
       programStatus: null,
       reset: null,
-      unknownOsc: null,
       renderHold: null,
       clipboardWrite: null
     }

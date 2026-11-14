@@ -3,8 +3,6 @@ import fs from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createRequire } from 'node:module'
 import * as Effect from 'effect/Effect'
 import * as Deferred from 'effect/Deferred'
 import * as Exit from 'effect/Exit'
@@ -49,7 +47,6 @@ import { browserObservedUrlSchema } from '@treeport/browser-host'
 import { decodeUnknownOrNull, isSchemaValue } from '#protocol/schema'
 import type { AppConfig, TreeportService } from './core/index.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
-import { networkTelemetry } from './network-telemetry.ts'
 import {
   PlaywrightBrowser,
   type BrowserInstallStatus,
@@ -133,16 +130,6 @@ export type BrowserSessionBrowserFactory = (
   worktreeId: string,
   callbacks: PlaywrightBrowserCallbacks
 ) => BrowserSessionBrowser
-
-interface BrowserAgentTarget {
-  appId: string
-  agentDirectory: string
-}
-
-export type BrowserAgentCliRunner = (
-  target: BrowserAgentTarget,
-  args: string[]
-) => Promise<string>
 
 export type BrowserLocalAutomationConnector = (
   endpoint: string
@@ -306,9 +293,6 @@ interface BrowserSession {
   videoSettings: BrowserVideoSettings
   scheduler: BrowserScheduler
   persistence: BrowserAppStatePersistence
-  agentAttached: boolean
-  agentSessionName: string | null
-  agentProcess: ChildProcess | null
   closing: boolean
   closeApproved: boolean
   closeRequest: Promise<boolean> | null
@@ -355,10 +339,6 @@ export class BrowserSessionManager {
   private readonly tickets = new Map<string, BrowserTicket>()
   private readonly ownerTickets = new Map<string, BrowserOwnerTicket>()
   private readonly downloads = new Map<string, BrowserDownload>()
-  private readonly operationQueuedAt = new WeakMap<
-    BrowserScheduledOperation,
-    number
-  >()
   private readonly unsubscribe: () => void
   private disposing: Promise<void> | null = null
   private disposed = false
@@ -366,14 +346,12 @@ export class BrowserSessionManager {
   private readonly service: BrowserSessionService
   private readonly config: BrowserSessionConfig
   private readonly browserFactory: BrowserSessionBrowserFactory
-  private readonly agentCliRunner: BrowserAgentCliRunner | null
   private readonly connectLocalAutomation: BrowserLocalAutomationConnector
 
   constructor(
     service: BrowserSessionService,
     config: BrowserSessionConfig,
     browserFactory: BrowserSessionBrowserFactory = defaultBrowserFactory,
-    agentCliRunner: BrowserAgentCliRunner | null = null,
     connectLocalAutomation: BrowserLocalAutomationConnector = async (
       endpoint
     ) => {
@@ -385,7 +363,6 @@ export class BrowserSessionManager {
     this.service = service
     this.config = config
     this.browserFactory = browserFactory
-    this.agentCliRunner = agentCliRunner
     this.connectLocalAutomation = connectLocalAutomation
 
     this.cachePath = path.join(config.cacheDir, 'browser')
@@ -826,7 +803,6 @@ export class BrowserSessionManager {
       }
 
       existing.execute = input.execute
-      networkTelemetry.droppedNow('browsers', 'coalesced')
 
       return existing
     }
@@ -837,8 +813,6 @@ export class BrowserSessionManager {
         ? MAX_BROWSER_SCHEDULED_OPERATIONS
         : MAX_BROWSER_REGULAR_OPERATIONS)
     ) {
-      networkTelemetry.droppedNow('browsers', 'dropped')
-
       return null
     }
 
@@ -850,8 +824,6 @@ export class BrowserSessionManager {
     }
 
     if (!Queue.unsafeOffer(scheduler.queue, operation)) {
-      networkTelemetry.droppedNow('browsers', 'dropped')
-
       return null
     }
 
@@ -866,9 +838,6 @@ export class BrowserSessionManager {
     ) {
       scheduler.controlKey = null
     }
-
-    this.operationQueuedAt.set(operation, Date.now())
-    networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
 
     return operation
   }
@@ -954,20 +923,6 @@ export class BrowserSessionManager {
             scheduler.controlKey = null
           }
 
-          networkTelemetry.queueDepthNow('browsers', scheduler.pending.size)
-          const queuedAt = this.operationQueuedAt.get(operation)
-          this.operationQueuedAt.delete(operation)
-
-          if (queuedAt !== undefined) {
-            networkTelemetry.durationNow(
-              'browsers',
-              'queue_wait',
-              Date.now() - queuedAt
-            )
-          }
-
-          const started = Date.now()
-
           const running = Effect.runPromise(
             Effect.gen(this, function* () {
               const result = yield* Effect.exit(
@@ -995,12 +950,6 @@ export class BrowserSessionManager {
               if (Exit.isFailure(result) && !operation.result) {
                 this.broadcastNavigationError(session, String(result.cause))
               }
-
-              networkTelemetry.durationNow(
-                'browsers',
-                'operation',
-                Date.now() - started
-              )
             })
           )
 
@@ -1045,12 +994,6 @@ export class BrowserSessionManager {
       void this.scheduleOperation(
         session,
         async () => {
-          if (!session.localOwner) {
-            if (!(await this.detachAgent(session))) {
-              return
-            }
-          }
-
           const browser = session.browser
 
           if (
@@ -1062,7 +1005,6 @@ export class BrowserSessionManager {
             !session.state.loading &&
             !session.fileChooser &&
             !session.touchAttachmentId &&
-            !session.agentProcess &&
             session.scheduler.pending.size === 0 &&
             session.scheduler.active.size === 1 &&
             ![...session.attachments.values()].some(
@@ -1099,15 +1041,12 @@ export class BrowserSessionManager {
     Effect.runSync(Queue.takeAll(scheduler.queue))
 
     for (const operation of scheduler.pending) {
-      this.operationQueuedAt.delete(operation)
-      networkTelemetry.droppedNow('browsers', 'dropped')
       Deferred.unsafeDone(operation.completion, Effect.fail(error))
     }
 
     scheduler.pending.clear()
     scheduler.tail = null
     scheduler.controlKey = null
-    networkTelemetry.queueDepthNow('browsers', 0)
   }
 
   private broadcastNavigationError(
@@ -1315,9 +1254,6 @@ export class BrowserSessionManager {
         write: null,
         ready: true
       },
-      agentAttached: false,
-      agentSessionName: null,
-      agentProcess: null,
       closing: false,
       closeApproved: false,
       closeRequest: null,
@@ -1358,8 +1294,6 @@ export class BrowserSessionManager {
 
     if (crashedBrowser) {
       this.resetVideoDelivery(session)
-      session.agentAttached = false
-      session.agentSessionName = null
     }
 
     const runtimeGeneration = ++session.generation
@@ -1774,10 +1708,6 @@ export class BrowserSessionManager {
         attachmentController(candidate) === attachmentController(ticket)
     )
 
-    if (supersededAttachments.length > 0) {
-      networkTelemetry.reconnectNow('browsers')
-    }
-
     if (
       session.attachments.size - supersededAttachments.length >=
       MAX_BROWSER_ATTACHMENTS
@@ -2007,10 +1937,6 @@ export class BrowserSessionManager {
 
         const readiness = Effect.runSync(Deferred.make<void>())
         const resumed = previousOwner?.viewerId === ticket.viewerId
-
-        if (resumed) {
-          networkTelemetry.reconnectNow('browser-owners')
-        }
 
         let owner: BrowserLocalOwner
         setRuntimePhase(session, 'none')
@@ -2283,9 +2209,6 @@ export class BrowserSessionManager {
         : null
     }
 
-    session.agentProcess?.kill('SIGTERM')
-    session.agentProcess = null
-    await this.detachAgent(session)
     this.broadcastState(session, 'controlChanged')
 
     if (
@@ -2724,8 +2647,6 @@ export class BrowserSessionManager {
             scheduler.pending.size === 0 &&
             session.controllerId === attachmentController(attachment)))
       ) {
-        networkTelemetry.droppedNow('browsers', 'coalesced')
-
         return
       }
 
@@ -3228,35 +3149,11 @@ export class BrowserSessionManager {
     }
   }
 
-  private async detachAgent(session: BrowserSession): Promise<boolean> {
-    const name = session.agentSessionName
-
-    if (!session.agentAttached || !name) {
-      return true
-    }
-
-    const detached = await this.executeAgentCli(session, [
-      `-s=${name}`,
-      'detach'
-    ]).then(
-      () => true,
-      () => false
-    )
-
-    if (detached) {
-      session.agentAttached = false
-      session.agentSessionName = null
-    }
-
-    return detached
-  }
-
   private async closePlaywrightRuntime(session: BrowserSession): Promise<void> {
     this.closeFileChooser(session)
     this.closeDialog(session)
     this.broadcastSelect(session, null)
     await this.waitForAppState(session)
-    await this.detachAgent(session)
     const launch = session.launch
     const browser = await launch?.catch(() => session.browser)
     await browser?.close()
@@ -3323,7 +3220,7 @@ export class BrowserSessionManager {
           Effect.promise(() =>
             session.launch || session.browser
               ? this.closePlaywrightRuntime(session)
-              : this.detachAgent(session).then(() => undefined)
+              : Promise.resolve()
           )
         )
         yield* Effect.addFinalizer(() =>
@@ -3525,7 +3422,6 @@ export class BrowserSessionManager {
 
     session.closing = true
     this.stopScheduler(session, reason)
-    session.agentProcess?.kill('SIGTERM')
 
     if (session.localOwner) {
       this.closeOwner(session.localOwner.transport.id)
@@ -3549,81 +3445,6 @@ export class BrowserSessionManager {
     session.closeOperation = closeOperation
 
     return closeOperation
-  }
-
-  private async playwrightCliPath(): Promise<string> {
-    const require = createRequire(import.meta.url)
-    const packageJsonPath = require.resolve('@playwright/cli/package.json')
-
-    return path.join(path.dirname(packageJsonPath), 'playwright-cli.js')
-  }
-
-  private executeAgentCli(
-    session: BrowserSession,
-    args: string[]
-  ): Promise<string> {
-    if (this.agentCliRunner) {
-      return this.agentCliRunner(
-        {
-          appId: session.appId,
-          agentDirectory: session.agentDirectory
-        },
-        args
-      )
-    }
-
-    return this.runAgentCli(session, args)
-  }
-
-  private async runAgentCli(
-    session: BrowserSession,
-    args: string[]
-  ): Promise<string> {
-    const cli = await this.playwrightCliPath()
-
-    return new Promise<string>((resolve, reject) => {
-      const child = spawn(process.execPath, [cli, ...args], {
-        cwd: session.agentDirectory,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 120_000,
-        killSignal: 'SIGTERM'
-      })
-
-      session.agentProcess = child
-      let output = ''
-
-      const append = (data: Buffer) => {
-        if (output.length < 10 * 1024 * 1024) {
-          output += String(data)
-        }
-      }
-
-      child.stdout.on('data', append)
-      child.stderr.on('data', append)
-      child.once('error', (error) => {
-        if (session.agentProcess === child) {
-          session.agentProcess = null
-        }
-
-        reject(error)
-      })
-      child.once('exit', (code) => {
-        if (session.agentProcess === child) {
-          session.agentProcess = null
-        }
-
-        if (code === 0) {
-          resolve(output.trim())
-        } else {
-          reject(
-            new Error(
-              output.trim() || `Playwright Agent CLI exited with ${code}`
-            )
-          )
-        }
-      })
-    })
   }
 
   private ensureLocalAutomation(
@@ -4123,64 +3944,26 @@ export class BrowserSessionManager {
             throw error
           })
 
-      try {
-        if (localOwner) {
-          session.retainLocalAgentPaint = true
-          await this.updateScreencast(session)
+      if (localOwner) {
+        session.retainLocalAgentPaint = true
+        await this.updateScreencast(session)
 
-          if (
-            session.localOwner !== localOwner ||
-            localOwner.generation !== session.generation
-          ) {
-            throw new Error('The local Browser owner changed.')
-          }
+        if (
+          session.localOwner !== localOwner ||
+          localOwner.generation !== session.generation
+        ) {
+          throw new Error('The local Browser owner changed.')
         }
-
-        if (localOwner) {
-          result = await this.executeLocalAgentCommand(
-            session,
-            localOwner,
-            input
-          )
-        } else if (this.agentCliRunner) {
-          const name =
-            session.agentSessionName ??
-            `treeport-${appId}-${session.generation}-${crypto
-              .randomBytes(6)
-              .toString('hex')}`
-
-          session.agentSessionName = name
-
-          if (!session.agentAttached) {
-            await this.executeAgentCli(session, [
-              'attach',
-              `treeport-${appId}`,
-              '--session',
-              name
-            ])
-            session.agentAttached = true
-          }
-
-          result = await this.executeAgentCli(session, [
-            `-s=${name}`,
-            input.command,
-            '--',
-            ...input.args
-          ])
-          this.queueAppState(session, browser!.state)
-        } else {
-          result = await browser!.agentCommand(input)
-          this.queueAppState(session, browser!.state)
-        }
-
-        await this.waitForAppState(session)
-      } catch (cause) {
-        if (!localOwner) {
-          session.agentAttached = false
-        }
-
-        throw cause
       }
+
+      if (localOwner) {
+        result = await this.executeLocalAgentCommand(session, localOwner, input)
+      } else {
+        result = await browser!.agentCommand(input)
+        this.queueAppState(session, browser!.state)
+      }
+
+      await this.waitForAppState(session)
     })
 
     return session.dialog

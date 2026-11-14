@@ -14,7 +14,7 @@ import * as Queue from 'effect/Queue'
 import * as Stream from 'effect/Stream'
 import type { TreeportService } from './core/index.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
-import { networkTelemetry } from './network-telemetry.ts'
+import { logConnectionClosed } from './network-telemetry.ts'
 import type { TerminalMetadataManager } from './terminal-metadata.ts'
 import type { WorkspacePresenceManager } from './workspace-presence.ts'
 
@@ -34,39 +34,17 @@ export function makeRpcHttpApp(
       WatchProjectEvents: () =>
         Stream.unwrapScoped(
           Effect.gen(function* () {
-            const started = Date.now()
-
-            const queue = yield* Queue.bounded<{
-              item: ProjectEventsItem
-              queuedAt: number
-            }>(EVENT_QUEUE_CAPACITY)
+            const queue =
+              yield* Queue.bounded<ProjectEventsItem>(EVENT_QUEUE_CAPACITY)
 
             const overflow = yield* Deferred.make<never, ProjectEventsFailure>()
             const queuedEvents: NetworkProductEvent[] = []
             let snapshotted = false
 
-            let closeReason: 'stream_closed' | 'slow_client' | 'interrupted' =
-              'stream_closed'
-
-            let queuedCount = 0
-
-            const offer = (item: ProjectEventsItem) => {
-              const offered = Queue.unsafeOffer(queue, {
-                item,
-                queuedAt: Date.now()
-              })
-
-              if (offered) {
-                queuedCount += 1
-                networkTelemetry.queueDepthNow('rpc', queuedCount)
-              }
-
-              return offered
-            }
+            let closeReason: 'stream_closed' | 'slow_client' = 'stream_closed'
 
             const overflowSlowClient = () => {
               closeReason = 'slow_client'
-              networkTelemetry.droppedNow('rpc', 'dropped')
               Deferred.unsafeDone(
                 overflow,
                 Effect.fail({
@@ -80,15 +58,12 @@ export function makeRpcHttpApp(
               const parsed = parseProductEvent(event)
 
               if (!parsed) {
-                networkTelemetry.decodeFailureNow('rpc')
-
                 return
               }
 
               if (!snapshotted) {
                 if (queuedEvents.length < EVENT_QUEUE_CAPACITY) {
                   queuedEvents.push(parsed)
-                  networkTelemetry.queueDepthNow('rpc', queuedEvents.length)
                 } else {
                   overflowSlowClient()
                 }
@@ -97,7 +72,7 @@ export function makeRpcHttpApp(
               }
 
               if (
-                !offer({
+                !Queue.unsafeOffer(queue, {
                   _tag: 'ProductEvent',
                   event: parsed
                 })
@@ -107,53 +82,21 @@ export function makeRpcHttpApp(
             })
 
             yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribe()))
-            yield* networkTelemetry.connectionOpened('rpc')
-            yield* Effect.addFinalizer((exit) => {
-              if (Exit.isInterrupted(exit)) {
-                closeReason = 'interrupted'
-              }
-
-              return Effect.all([
-                ...(Exit.isInterrupted(exit)
-                  ? [networkTelemetry.interrupted('rpc')]
-                  : []),
-                networkTelemetry.queueDepth('rpc', 0),
-                networkTelemetry.duration(
-                  'rpc',
-                  'stream_lifetime',
-                  Date.now() - started
-                ),
-                networkTelemetry.connectionClosed('rpc', closeReason)
-              ]).pipe(Effect.asVoid)
-            })
+            yield* Effect.addFinalizer((exit) =>
+              logConnectionClosed(
+                'rpc',
+                Exit.isInterrupted(exit) ? 'interrupted' : closeReason
+              )
+            )
             const terminalMetadataSnapshot = terminalMetadata.snapshot()
             const presenceSnapshot = presence.snapshot()
             const representedEventCount = queuedEvents.length
 
-            const [webApps, browserApps] = yield* Effect.all([
-              service.apps.listWebApps(),
-              service.apps.listBrowserApps()
-            ]).pipe(
-              Effect.mapError(
-                (cause): ProjectEventsFailure => ({
-                  _tag: 'ProjectEventsFailure',
-                  message:
-                    cause instanceof Error
-                      ? cause.message
-                      : 'App snapshot failed'
-                })
-              )
-            )
-
-            queuedCount = 0
-            networkTelemetry.queueDepthNow('rpc', 0)
-            offer({
+            Queue.unsafeOffer(queue, {
               _tag: 'Snapshot',
               snapshot: {
                 at: new Date().toISOString(),
                 terminalMetadata: terminalMetadataSnapshot,
-                webApps,
-                browserApps,
                 presence: presenceSnapshot
               }
             })
@@ -161,7 +104,7 @@ export function makeRpcHttpApp(
 
             for (const event of queuedEvents) {
               if (
-                !offer({
+                !Queue.unsafeOffer(queue, {
                   _tag: 'ProductEvent',
                   event
                 })
@@ -171,35 +114,9 @@ export function makeRpcHttpApp(
             }
 
             snapshotted = true
-            yield* networkTelemetry.duration(
-              'rpc',
-              'snapshot_setup',
-              Date.now() - started
-            )
-
-            const items = Stream.fromQueue(queue).pipe(
-              Stream.mapEffect(({ item, queuedAt }) =>
-                Effect.gen(function* () {
-                  queuedCount = Math.max(0, queuedCount - 1)
-                  yield* networkTelemetry.queueDepth('rpc', queuedCount)
-                  yield* networkTelemetry.duration(
-                    'rpc',
-                    'queue_wait',
-                    Date.now() - queuedAt
-                  )
-                  yield* networkTelemetry.message(
-                    'rpc',
-                    'out',
-                    Buffer.byteLength(JSON.stringify(item))
-                  )
-
-                  return item
-                })
-              )
-            )
 
             return Stream.merge(
-              items,
+              Stream.fromQueue(queue),
               Stream.fromEffect(Deferred.await(overflow))
             )
           })

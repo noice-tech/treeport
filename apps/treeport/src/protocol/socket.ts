@@ -176,14 +176,6 @@ export const productEventSchema = Schema.Union(
     })
   ),
   eventEnvelope(
-    'terminal.controller_changed',
-    Schema.Struct({
-      terminalId: identifierSchema,
-      controlled: Schema.Boolean,
-      worktreeId: Schema.Null
-    })
-  ),
-  eventEnvelope(
     'app.created',
     Schema.Struct({
       worktreeId: identifierSchema,
@@ -246,8 +238,6 @@ export type NetworkProductEvent = Schema.Schema.Type<typeof productEventSchema>
 export const eventsSnapshotSchema = Schema.Struct({
   at: dateTimeString,
   terminalMetadata: Schema.Array(terminalRuntimeMetadataSchema),
-  webApps: Schema.Array(webAppSnapshotSchema),
-  browserApps: Schema.Array(browserAppSnapshotSchema),
   presence: Schema.Array(workspacePresenceSchema)
 })
 
@@ -277,10 +267,6 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   })(value)
 
   return Either.isRight(parsed) ? parsed.right : null
-}
-
-export function parseEventsSnapshot(value: unknown): EventsSnapshot | null {
-  return decodeOrNull(eventsSnapshotSchema, value)
 }
 
 export function parseProductEvent(value: unknown): NetworkProductEvent | null {

@@ -295,10 +295,6 @@ export const worktreeResponseSchema = Schema.Struct({
   worktree: worktreeRecordSchema
 })
 
-export const worktreesResponseSchema = Schema.Struct({
-  worktrees: Schema.Array(worktreeRecordSchema)
-})
-
 export const listenerDiscoveryResponseSchema = Schema.Struct({
   discovery: worktreeListenerDiscoverySchema
 })

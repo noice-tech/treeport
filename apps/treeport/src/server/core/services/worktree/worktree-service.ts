@@ -9,13 +9,8 @@ import type { TerminalSize } from '#protocol/terminal-session'
 import type * as Effect from 'effect/Effect'
 import type { DomainError } from '../../domain.ts'
 import type { ApplicationServices } from '../infrastructure/application-runtime.ts'
-import {
-  type CreateWorktreeResult,
-  WorktreeCreationService
-} from './worktree-creation-service.ts'
+import { WorktreeCreationService } from './worktree-creation-service.ts'
 import { WorktreeRemovalService } from './worktree-removal-service.ts'
-
-export type { CreateWorktreeResult } from './worktree-creation-service.ts'
 
 export class WorktreeService {
   private readonly creation: WorktreeCreationService
@@ -70,35 +65,6 @@ export class WorktreeService {
     request: CreateOperationRequest
   ): Effect.Effect<void, DomainError<unknown>, ApplicationServices> {
     return this.creation.resumeCreate(operationId, projectId, request)
-  }
-
-  createWorktree(
-    projectId: string,
-    inputName: string | undefined,
-    base: 'default' | 'current',
-    initialTerminal?: {
-      name: string
-      command?: string
-      afterExit?: TerminalAfterExit
-      initialSize?: TerminalSize
-    },
-    sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle,
-    originWorktreeId?: string
-  ): Effect.Effect<
-    CreateWorktreeResult,
-    DomainError<unknown>,
-    ApplicationServices
-  > {
-    return this.creation.createWorktree(
-      projectId,
-      inputName,
-      base,
-      initialTerminal,
-      sourceWorktreeId,
-      treeTitle,
-      originWorktreeId
-    )
   }
 
   removePreview(

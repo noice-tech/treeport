@@ -368,7 +368,7 @@ describe('request security over a real HTTP server', () => {
     const developmentKey = '0123456789abcdef01234567'
 
     const sandboxedAppModule = await request(value.url, {
-      path: `/api/web-apps/${appId}/assets/__treeport/${'b'.repeat(64)}/assets/review.js`,
+      path: `/api/web-apps/${appId}/assets/review.js`,
       headers: {
         ...tailscaleHeaders,
         Origin: 'null',

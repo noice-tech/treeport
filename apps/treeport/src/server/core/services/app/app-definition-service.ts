@@ -89,7 +89,6 @@ export class AppDefinitionService {
           root,
           entry,
           packageRoot: worktree.path,
-          development: true,
           definitionId: `project:${encodeURIComponent(directory.name)}`,
           allowNetworkRequests: false
         })
@@ -122,13 +121,12 @@ export class AppDefinitionService {
       const definitions: ResolvedDefinition[] = [
         ...(yield* localWebAppDefinitions(worktreeId)),
         ...packageDefinitions.map(
-          ({ definition, root, entry, packageRoot, development }) => {
+          ({ definition, root, entry, packageRoot }) => {
             const resolved: ResolvedDefinition = {
               ...definition,
               root,
               entry,
               packageRoot,
-              development,
               definitionId: definition.id,
               allowNetworkRequests: definition.sandbox.allowSameOrigin
             }
@@ -289,7 +287,6 @@ export class AppDefinitionService {
           root: _root,
           entry: _entry,
           packageRoot: _packageRoot,
-          development: _development,
           definitionId: _definitionId,
           packageSource: _packageSource,
           allowNetworkRequests: _allowNetworkRequests,

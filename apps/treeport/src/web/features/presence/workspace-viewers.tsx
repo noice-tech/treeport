@@ -15,11 +15,9 @@ import {
 
 export function WorkspaceViewers({
   worktree,
-  focusedAppId,
   presence
 }: {
   worktree: WorktreeRecord | null
-  focusedAppId: string | null
   presence: WorkspacePresenceStore
 }) {
   const { identity, viewers } = useSyncExternalStore(
@@ -27,29 +25,10 @@ export function WorkspaceViewers({
     presence.getSnapshot
   )
 
-  const mockViewer: WorkspacePresence | null =
-    import.meta.env.DEV &&
-    import.meta.env.VITE_TREEPORT_MOCK_PRESENCE === '1' &&
-    worktree
-      ? {
-          sessionId: '00000000-0000-4000-8000-000000000001',
-          worktreeId: worktree.id,
-          focusedAppId,
-          visible: true,
-          focused: true,
-          identity: {
-            source: 'tailscale',
-            login: 'bob@treeport.invalid',
-            name: 'Bob (demo)',
-            profilePicture: null
-          }
-        }
-      : null
-
   const people = new Map<string, WorkspacePresence[]>()
 
   if (worktree && identity) {
-    for (const viewer of mockViewer ? [...viewers, mockViewer] : viewers) {
+    for (const viewer of viewers) {
       if (!isOtherPerson(viewer, identity, worktree.id)) {
         continue
       }

@@ -25,18 +25,6 @@ export function sessionOwnershipViolations(file, source) {
     )
   }
 
-  if (
-    (file.endsWith('/preflight.ts') ||
-      file.endsWith('/cleanup-development-runtime.mjs')) &&
-    /\bsessionStatusSchema\b|\b(?:status|inspected)\.(?:ownerPid|pid)\b/u.test(
-      source
-    )
-  ) {
-    violations.push(
-      `${file}: use PersistentSession.inspect() or closeSession from @treeport/session-keeper; do not interpret retained session status`
-    )
-  }
-
   return violations
 }
 
@@ -84,15 +72,6 @@ for (const name of files) {
     }
   }
 }
-
-const cleanup = 'scripts/cleanup-development-runtime.mjs'
-
-violations.push(
-  ...sessionOwnershipViolations(
-    cleanup,
-    await fs.readFile(path.join(appRoot, cleanup), 'utf8')
-  )
-)
 
 assert.deepEqual(
   violations,

@@ -183,6 +183,13 @@
       "when": 1794647683676,
       "tag": "0025_launcher_color",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1794654500723,
+      "tag": "0026_drop_project_color",
+      "breakpoints": true
     }
   ]
 }

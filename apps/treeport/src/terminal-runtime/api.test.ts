@@ -27,17 +27,12 @@ describe('stable terminal host API', () => {
       data: { terminalId: 'term-🌲', value: { commandExitCode: 0 } }
     }
 
-    const compact = await Effect.runPromise(
-      encodeTerminalHostFrame(output, true)
-    )
-
-    const json = await Effect.runPromise(encodeTerminalHostFrame(output))
-    expect(compact.length).toBeLessThan(json.length)
+    const compact = await Effect.runPromise(encodeTerminalHostFrame(output))
 
     const wire = Buffer.concat([
       compact,
       await Effect.runPromise(encodeTerminalHostFrame(runtime)),
-      json
+      compact
     ])
 
     const decode = makeTerminalHostFrameDecoder()

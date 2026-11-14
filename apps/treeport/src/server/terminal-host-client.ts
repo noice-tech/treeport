@@ -640,13 +640,6 @@ export class TerminalHostClient
     return this.request('titleState', { terminalId })
   }
 
-  signalTerminal(
-    terminalId: string,
-    signal: 'SIGINT' | 'SIGTERM' | 'SIGKILL' | 'SIGHUP'
-  ) {
-    return this.request('signal', { terminalId, signal }).pipe(Effect.asVoid)
-  }
-
   killTerminal(terminalId: string, trace?: TerminalTraceContext) {
     return this.request('kill', { terminalId }, trace).pipe(Effect.asVoid)
   }

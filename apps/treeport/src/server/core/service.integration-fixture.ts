@@ -2,7 +2,7 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeAll } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest'
 import { asc, eq, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import type { ProjectRecord } from '#protocol/project'
@@ -120,17 +120,8 @@ export function integrationService(
     requestWorkspaceOpen: run(
       application.projects.requestWorkspaceOpen.bind(application.projects)
     ),
-    resolveProject: run(
-      application.projects.resolveProject.bind(application.projects)
-    ),
     resolveRegisteredProject: run(
       application.projects.resolveRegisteredProject.bind(application.projects)
-    ),
-    resolveWorktree: run(
-      application.projects.resolveWorktree.bind(application.projects)
-    ),
-    updateProjectColor: run(
-      application.projects.updateProjectColor.bind(application.projects)
     ),
     pruneDecorationSources: run(
       application.projects.pruneDecorationSources.bind(application.projects)
@@ -147,9 +138,6 @@ export function integrationService(
     ),
     beginRemove: run(
       application.worktrees.beginRemove.bind(application.worktrees)
-    ),
-    createWorktree: run(
-      application.worktrees.createWorktree.bind(application.worktrees)
     ),
     listActiveOperations: run(
       application.worktrees.listActiveOperations.bind(application.worktrees)
@@ -182,9 +170,6 @@ export function integrationService(
     reorderTerminals: run(
       application.terminals.reorderTerminals.bind(application.terminals)
     ),
-    terminateAllTerminals: run(
-      application.terminals.terminateAllTerminals.bind(application.terminals)
-    ),
 
     createLauncher: run(
       application.launchers.createLauncher.bind(application.launchers)
@@ -205,24 +190,9 @@ export function integrationService(
     authorizeBrowserApp: run(
       application.apps.authorizeBrowserApp.bind(application.apps)
     ),
-    createBrowserApp: run(
-      application.apps.createBrowserApp.bind(application.apps)
-    ),
-    createWebApp: run(application.apps.createWebApp.bind(application.apps)),
-    deleteBrowserApp: run(
-      application.apps.deleteBrowserApp.bind(application.apps)
-    ),
     deleteApp: run(application.apps.deleteApp.bind(application.apps)),
-    deleteWebApp: run(application.apps.deleteWebApp.bind(application.apps)),
     deleteWebAppStorage: run(
       application.apps.deleteWebAppStorage.bind(application.apps)
-    ),
-    getBrowserApp: run(application.apps.getBrowserApp.bind(application.apps)),
-    getBrowserAppListeners: run(
-      application.apps.getBrowserAppListeners.bind(application.apps)
-    ),
-    getAppListeners: run(
-      application.apps.getAppListeners.bind(application.apps)
     ),
     getWebAppServiceContext: run(
       application.apps.getWebAppServiceContext.bind(application.apps)
@@ -249,13 +219,9 @@ export function integrationService(
     hasWebAppStorage: run(
       application.apps.hasWebAppStorage.bind(application.apps)
     ),
-    listBrowserApps: run(
-      application.apps.listBrowserApps.bind(application.apps)
-    ),
     listWebAppDefinitions: run(
       application.apps.listWebAppDefinitions.bind(application.apps)
     ),
-    listWebApps: run(application.apps.listWebApps.bind(application.apps)),
     openBrowserApp: run(application.apps.openBrowserApp.bind(application.apps)),
     openBrowserAppFromApp: run(
       application.apps.openBrowserAppFromApp.bind(application.apps)
@@ -327,6 +293,26 @@ afterEach(async () => {
       .map((directory) => fs.rm(directory, { recursive: true, force: true }))
   )
 })
+
+export async function createCompletedWorktree(
+  service: IntegrationService,
+  projectId: string,
+  name: string
+) {
+  const operation = await service.beginCreateWorktree(
+    projectId,
+    name,
+    'default'
+  )
+
+  await vi.waitFor(async () => {
+    expect((await service.getOperation(operation.id)).status).toBe('completed')
+  })
+
+  const { worktreeId } = await service.getOperation(operation.id)
+
+  return service.getWorktreeSnapshot(worktreeId!)
+}
 
 export async function persistedProject(
   database: TreeportDatabase,
@@ -963,6 +949,9 @@ export async function fixture() {
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
+    appVersion: 'test',
+    instanceId: 'test-instance',
+    installationMethod: 'test',
     webDevelopment: false
   }
 

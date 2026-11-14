@@ -22,9 +22,7 @@ import {
 import {
   ApplicationFibers,
   type ApplicationServices,
-  ProjectObservations,
   TerminalMutations,
-  TreeFileMutations,
   WorktreeMutations
 } from '../infrastructure/application-runtime.ts'
 import { MutationLocks } from '../infrastructure/mutation-locks.ts'
@@ -1093,52 +1091,6 @@ export class TerminalService {
             ? Effect.void
             : terminalState.releaseRemoval(terminalId)
       )
-    })
-  }
-
-  terminateAllTerminals(): TerminalEffect<number> {
-    const clearWorktreeTerminalState =
-      this.clearWorktreeTerminalState.bind(this)
-
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
-
-    const listProjects = this.listProjects.bind(this)
-
-    return Effect.gen(function* () {
-      const applicationFibers = yield* ApplicationFibers
-      const projectObservations = yield* ProjectObservations
-      const terminalHost = yield* TerminalHostPort
-      const terminalMutations = yield* TerminalMutations
-      const treeFileMutations = yield* TreeFileMutations
-      const worktreeMutations = yield* WorktreeMutations
-      yield* Effect.all(
-        [
-          worktreeMutations.drain,
-          terminalMutations.drain,
-          treeFileMutations.drain,
-          projectObservations.drain
-        ],
-        { concurrency: 'unbounded', discard: true }
-      )
-      yield* applicationFibers.awaitEmpty
-
-      let terminated = 0
-
-      for (const project of yield* listProjects()) {
-        for (const worktree of project.worktrees) {
-          const terminalIds = yield* terminalHost
-            .killWorktree(worktree.id)
-            .pipe(Effect.orDie)
-
-          terminated += terminalIds.length
-          yield* clearWorktreeTerminalState(worktree.id, terminalIds)
-        }
-      }
-
-      yield* invalidateProjectsSnapshot()
-
-      return terminated
     })
   }
 }

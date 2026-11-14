@@ -47,12 +47,7 @@ export interface ComputerSummary extends SavedComputer {
 export type ConnectionState =
   | { status: 'empty' }
   | { status: 'connecting'; computerId: string }
-  | {
-      status: 'ready'
-      computerId: string
-      serverVersion: string | null
-      url: string
-    }
+  | { status: 'ready'; computerId: string }
   | {
       status: 'unavailable'
       computerId: string
@@ -93,7 +88,6 @@ export interface RemoteUpdateState {
 }
 
 export interface DesktopShellState {
-  appVersion: string
   packaged: boolean
   platform: NodeJS.Platform
   fullscreen: boolean

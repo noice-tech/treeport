@@ -197,7 +197,3 @@ export const terminalCaptureResponseSchema = Schema.Struct({
   lineLimit: Schema.Int.pipe(Schema.positive()),
   content: Schema.String
 })
-
-export const terminatedTerminalsResponseSchema = Schema.Struct({
-  terminated: Schema.NonNegativeInt
-})

@@ -167,7 +167,6 @@ export class GhosttyTerminalCore implements TerminalCore {
       progress: null,
       programStatus: () => {},
       reset: null,
-      unknownOsc: null,
       renderHold: () => {
         this.synchronizedGeneration += 1
       },

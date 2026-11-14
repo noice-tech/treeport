@@ -15,11 +15,7 @@ declare global {
       computerActivity: () => Promise<ComputerActivity[]>
       getState: () => Promise<DesktopShellState>
       onState: (listener: (state: DesktopShellState) => void) => () => void
-      onTerminalSelectionActive: (
-        listener: (active: boolean) => void
-      ) => () => void
       onAttentionSound: (listener: () => void) => () => void
-      releaseTerminalSelection: () => void
       copyPhoneLink: (url: string) => Promise<boolean>
       phoneAccess: (id: string, enable: boolean) => Promise<PhoneAccessResponse>
       selectComputer: (id: string) => Promise<boolean>

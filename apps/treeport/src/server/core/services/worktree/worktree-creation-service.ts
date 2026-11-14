@@ -421,68 +421,6 @@ export class WorktreeCreationService {
     )
   }
 
-  createWorktree(
-    projectId: string,
-    inputName: string | undefined,
-    base: 'default' | 'current',
-    initialTerminal?: CreateInitialTerminal,
-    sourceWorktreeId?: string,
-    treeTitle?: LauncherTreeTitle,
-    originWorktreeId?: string
-  ): Effect.Effect<
-    CreateWorktreeResult,
-    DomainError<unknown>,
-    ApplicationServices
-  > {
-    const executeCreateWorktree = this.executeCreateWorktree.bind(this)
-
-    return Effect.gen(function* () {
-      const locks = yield* MutationLocks
-      const projectStore = yield* ProjectStore
-      const worktreeMutations = yield* WorktreeMutations
-      const project = yield* projectStore.requireOpenProject(projectId)
-
-      if (project.kind === 'folder') {
-        return yield* Effect.fail(
-          new DomainError(
-            'PROJECT_HAS_NO_GIT_REPOSITORY',
-            'Linked worktrees require a Git repository project',
-            409
-          )
-        )
-      }
-
-      if (
-        (yield* locks.isProjectLocked(projectId)) &&
-        !(yield* worktreeMutations.isBusy(projectId))
-      ) {
-        return yield* Effect.fail(
-          new DomainError(
-            'PROJECT_BUSY',
-            'Project is already being modified',
-            409
-          )
-        )
-      }
-
-      return yield* worktreeMutations.enqueue(
-        projectId,
-        executeCreateWorktree(
-          projectId,
-          inputName ??
-            availableTreeName(
-              project.worktrees.map((worktree) => worktree.name)
-            ),
-          base,
-          initialTerminal,
-          sourceWorktreeId,
-          treeTitle,
-          originWorktreeId
-        )
-      )
-    })
-  }
-
   private executeCreateWorktree(
     projectId: string,
     inputName: string,

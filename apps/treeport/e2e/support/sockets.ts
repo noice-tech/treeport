@@ -36,7 +36,6 @@ function emptySnapshot(cols: number, rows: number): string {
       progress: null,
       programStatus: null,
       reset: null,
-      unknownOsc: null,
       renderHold: null,
       clipboardWrite: null
     }
@@ -190,8 +189,6 @@ export async function installMockSockets(
             snapshot: {
               at: new Date().toISOString(),
               terminalMetadata: initialMetadata,
-              webApps: [],
-              browserApps: [],
               presence: []
             }
           })

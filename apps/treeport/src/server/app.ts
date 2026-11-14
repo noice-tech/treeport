@@ -14,7 +14,6 @@ import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import {
   appServiceSchema,
   appServiceRequestSchema,
-  createWebAppSchema,
   deleteWebAppStorageSchema,
   getWebAppStorageSchema,
   openWebAppResponseSchema,
@@ -25,7 +24,6 @@ import {
   webAppContextResponseSchema,
   webAppDefinitionResponseSchema,
   webAppDefinitionsResponseSchema,
-  webAppResponseSchema,
   gitFileDiffRequestSchema,
   gitDiffRequestSchema,
   gitDiffImageRequestSchema,
@@ -43,7 +41,6 @@ import {
 import {
   apiErrorBodySchema,
   browserTraceBatchSchema,
-  DESKTOP_PROTOCOL_VERSION,
   healthResponseSchema,
   phoneAccessResponseSchema,
   uploadedFileResponseSchema,
@@ -58,8 +55,7 @@ import {
   projectsResponseSchema,
   recentProjectsResponseSchema,
   registerProjectSchema,
-  terminalProjectResponseSchema,
-  updateProjectSchema
+  terminalProjectResponseSchema
 } from '#protocol/project'
 import {
   browserAgentCommandSchema,
@@ -91,7 +87,6 @@ import {
   terminalObservationResponseSchema,
   terminalResponseSchema,
   TERMINAL_MAX_UPLOAD_BYTES,
-  terminatedTerminalsResponseSchema,
   updateTerminalSchema
 } from '#protocol/terminal'
 import {
@@ -100,7 +95,6 @@ import {
   setTreeDecorationSchema,
   TREE_DECORATION_KEY_PATTERN,
   worktreeResponseSchema,
-  worktreesResponseSchema,
   listenerDiscoveryResponseSchema
 } from '#protocol/worktree'
 import {
@@ -174,7 +168,7 @@ import type { WebPushManager } from './web-push.ts'
 import type { ComputerDirectory } from './computers.ts'
 import { findProjectIcon } from './project-icon.ts'
 import type { AppServices } from './app-services.ts'
-import { networkTelemetry } from './network-telemetry.ts'
+import { logConnectionClosed } from './network-telemetry.ts'
 import { tailscaleServeUrl } from './tailscale.ts'
 import {
   computerAddSchema,
@@ -259,12 +253,12 @@ interface AppDependencies {
   config: AppConfig
   terminalHost: TerminalSessionBackend
   terminalMetadata: TerminalMetadataManager
-  appServices?: AppServices
-  browserSessions?: BrowserSessionManager
+  appServices: AppServices
+  browserSessions: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
   computers: ComputerDirectory
-  rpcHttpApp?: HttpApp.Default<never, Scope.Scope>
+  rpcHttpApp: HttpApp.Default<never, Scope.Scope>
   webDist?: string
 }
 
@@ -482,38 +476,19 @@ export function createApp({
       requestProtocol: new URL(request.url, config.apiUrl).protocol
     })
 
-    const commonHeaders = {
-      'cache-control':
-        resolution.kind === 'error'
-          ? 'no-store'
-          : 'public, max-age=31536000, immutable',
-      'content-security-policy': webAppContentSecurityPolicy(
-        resolution.kind === 'error' ? 'error' : 'immutable',
-        browserOrigin,
-        resolution.allowNetworkRequests
-      ),
-      'x-content-type-options': 'nosniff'
-    }
-
-    if (resolution.kind === 'error') {
-      return HttpServerResponse.html(resolution.html).pipe(
-        HttpServerResponse.setStatus(500),
-        HttpServerResponse.setHeaders({
-          ...commonHeaders,
-          'content-type': 'text/html; charset=utf-8'
-        })
-      )
-    }
-
-    const body = yield* operation(() => fs.readFile(resolution.path))
-
-    return HttpServerResponse.uint8Array(body, {
-      headers: {
-        ...commonHeaders,
-        'content-type': contentType(resolution.path),
-        'access-control-allow-origin': '*'
-      }
-    })
+    return HttpServerResponse.html(resolution.html).pipe(
+      HttpServerResponse.setStatus(500),
+      HttpServerResponse.setHeaders({
+        'cache-control': 'no-store',
+        'content-security-policy': webAppContentSecurityPolicy(
+          'error',
+          browserOrigin,
+          resolution.allowNetworkRequests
+        ),
+        'x-content-type-options': 'nosniff',
+        'content-type': 'text/html; charset=utf-8'
+      })
+    )
   })
 
   const requirePackageAccess = Effect.gen(function* () {
@@ -523,7 +498,7 @@ export function createApp({
       request.headers.authorization ?? ''
     )?.[1]
 
-    const access = token ? (appServices?.access(token) ?? null) : null
+    const access = token ? (appServices.access(token) ?? null) : null
 
     if (!token || !access) {
       return yield* Effect.fail(
@@ -766,16 +741,6 @@ export function createApp({
       'POST',
       '/api/browser/install',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
         return jsonContractResponse(browserInstallResponseSchema, {
           message: yield* operation(() => browserSessions.install())
         })
@@ -785,16 +750,6 @@ export function createApp({
       'GET',
       '/api/browser/status',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
         return jsonContractResponse(
           browserInstallStatusSchema,
           yield* operation(() => browserSessions.status())
@@ -805,16 +760,6 @@ export function createApp({
       'GET',
       '/api/browser-downloads/:token',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
         const params = yield* routeParams
         const request = yield* serverRequest
 
@@ -878,16 +823,6 @@ export function createApp({
       'POST',
       '/api/apps/:appId/browser-agent',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
         const params = yield* routeParams
         const input = yield* requestBody(browserAgentCommandSchema)
 
@@ -925,16 +860,6 @@ export function createApp({
       'POST',
       '/api/apps/:appId/browser-owner-ticket',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Browser service is unavailable',
-              503
-            )
-          )
-        }
-
         const params = yield* routeParams
         const request = yield* serverRequest
         const body = yield* requestBody(browserOwnerTicketRequestSchema)
@@ -968,16 +893,6 @@ export function createApp({
       'POST',
       '/api/apps/:appId/browser-ticket',
       Effect.gen(function* () {
-        if (!browserSessions) {
-          return yield* Effect.fail(
-            new DomainError(
-              'BROWSER_UNAVAILABLE',
-              'Hosted browser service is unavailable',
-              503
-            )
-          )
-        }
-
         const params = yield* routeParams
         const body = yield* requestBody(browserTicketRequestSchema)
         const request = yield* serverRequest
@@ -1057,12 +972,11 @@ export function createApp({
       Effect.succeed(
         jsonContractResponse(healthResponseSchema, {
           ok: true,
-          version: config.appVersion ?? 'development',
-          protocolVersion: DESKTOP_PROTOCOL_VERSION,
+          version: config.appVersion,
           hostname: os.hostname(),
           pid: process.pid,
-          instanceId: config.instanceId ?? null,
-          installationMethod: config.installationMethod ?? 'development',
+          instanceId: config.instanceId,
+          installationMethod: config.installationMethod,
           url: config.apiUrl
         })
       )
@@ -1551,23 +1465,6 @@ export function createApp({
       })
     ),
     route(
-      'PATCH',
-      '/api/projects/:projectId',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-        const body = yield* requestBody(updateProjectSchema)
-        yield* operation(() =>
-          service.projects.updateProjectColor(params.projectId!, body.color)
-        )
-
-        return jsonContractResponse(projectResponseSchema, {
-          project: yield* operation(() =>
-            service.projects.getProjectSnapshot(params.projectId!)
-          )
-        })
-      })
-    ),
-    route(
       'DELETE',
       '/api/projects/:projectId',
       Effect.gen(function* () {
@@ -1577,21 +1474,6 @@ export function createApp({
         )
 
         return jsonContractResponse(okResponseSchema, { ok: true })
-      })
-    ),
-    route(
-      'GET',
-      '/api/projects/:projectId/worktrees',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-
-        const project = yield* operation(() =>
-          service.projects.getProjectSnapshot(params.projectId!)
-        )
-
-        return jsonContractResponse(worktreesResponseSchema, {
-          worktrees: project.worktrees
-        })
       })
     ),
     route(
@@ -1643,19 +1525,6 @@ export function createApp({
       })
     ),
 
-    route(
-      'GET',
-      '/api/worktrees/:worktreeId',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-
-        return jsonContractResponse(worktreeResponseSchema, {
-          worktree: yield* operation(() =>
-            service.projects.getWorktreeSnapshot(params.worktreeId!)
-          )
-        })
-      })
-    ),
     route(
       'PATCH',
       '/api/worktrees/:worktreeId',
@@ -1749,7 +1618,7 @@ export function createApp({
                 return
               }
 
-              const access = appServices?.access(token) ?? null
+              const access = appServices.access(token) ?? null
 
               if (!access) {
                 void emit.end()
@@ -1808,7 +1677,7 @@ export function createApp({
             request.headers.authorization ?? ''
           )?.[1]
 
-          const access = token ? (appServices?.access(token) ?? null) : null
+          const access = token ? (appServices.access(token) ?? null) : null
 
           if (token && !access) {
             return yield* Effect.fail(
@@ -1957,23 +1826,6 @@ export function createApp({
     ),
     route(
       'POST',
-      '/api/worktrees/:worktreeId/apps',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-        const body = yield* requestBody(createWebAppSchema)
-
-        const app = yield* operation(() =>
-          service.apps.createWebApp(params.worktreeId!, body.definitionId, {
-            input: body.input ?? null,
-            cwd: body.launchCwd ?? null
-          })
-        )
-
-        return jsonContractResponse(webAppResponseSchema, { app }, 201)
-      })
-    ),
-    route(
-      'POST',
       '/api/worktrees/:worktreeId/apps/open',
       Effect.gen(function* () {
         const params = yield* routeParams
@@ -2005,16 +1857,11 @@ export function createApp({
         })
         const query = yield* requestQuery(deleteAppQuerySchema)
 
-        const canClose = browserSessions
-          ? yield* operation(() =>
-              browserSessions.requestAppClose(
-                params.appId!,
-                query.force === 'true'
-              )
-            ).pipe(Effect.withSpan('treeport.app.remove.close_guard'))
-          : undefined
+        const canClose = yield* operation(() =>
+          browserSessions.requestAppClose(params.appId!, query.force === 'true')
+        ).pipe(Effect.withSpan('treeport.app.remove.close_guard'))
 
-        if (canClose === false) {
+        if (!canClose) {
           return yield* Effect.fail(
             new DomainError(
               'BROWSER_BEFORE_UNLOAD',
@@ -2045,16 +1892,6 @@ export function createApp({
           const context = yield* operation(() =>
             service.apps.getWebAppServiceContext(params.appId!)
           )
-
-          if (!appServices) {
-            return yield* Effect.fail(
-              new DomainError(
-                'SERVICES_UNAVAILABLE',
-                'App services are unavailable',
-                503
-              )
-            )
-          }
 
           return jsonContractResponse(
             appServiceSchema,
@@ -2166,7 +2003,7 @@ export function createApp({
 
         return jsonContractResponse(listenerDiscoveryResponseSchema, {
           discovery: yield* operation(() =>
-            service.apps.getAppListeners(params.appId!)
+            service.apps.getWebAppListeners(params.appId!)
           )
         })
       })
@@ -2705,22 +2542,7 @@ export function createApp({
         })
       })
     ),
-    route(
-      'POST',
-      '/api/admin/terminate-terminals',
-      Effect.gen(function* () {
-        const terminated = yield* operation(() =>
-          service.terminals.terminateAllTerminals()
-        )
-
-        yield* operation(() => terminalHost.shutdownIfEmpty())
-
-        return jsonContractResponse(terminatedTerminalsResponseSchema, {
-          terminated
-        })
-      })
-    ),
-    ...(rpcHttpApp ? [route('POST', '/api/rpc', rpcHttpApp)] : []),
+    route('POST', '/api/rpc', rpcHttpApp),
     route(
       '*',
       '/api/*',
@@ -2793,7 +2615,6 @@ export function createApp({
 
   const httpApp = Effect.gen(function* () {
     const request = yield* serverRequest
-    const started = Date.now()
 
     const requestId = (
       request.headers['x-request-id'] ?? crypto.randomUUID()
@@ -2809,15 +2630,6 @@ export function createApp({
       'http.request.method': request.method,
       'url.path': requestPath
     })
-    yield* networkTelemetry.connectionOpened('http')
-    const declaredRequestBytes = Number(request.headers['content-length'])
-    yield* networkTelemetry.message(
-      'http',
-      'in',
-      Number.isSafeInteger(declaredRequestBytes) && declaredRequestBytes >= 0
-        ? declaredRequestBytes
-        : 0
-    )
 
     const response = yield* routed.pipe(
       Effect.provideService(
@@ -2895,31 +2707,20 @@ export function createApp({
         )
       }),
       Effect.onExit((exit) =>
-        Effect.all([
-          networkTelemetry.duration('http', 'request', Date.now() - started),
-          ...(Exit.isInterrupted(exit)
-            ? [networkTelemetry.interrupted('http')]
-            : []),
-          networkTelemetry.connectionClosed(
-            'http',
-            Exit.isInterrupted(exit)
-              ? 'interrupted'
-              : Exit.isFailure(exit)
-                ? 'failed'
-                : 'request_complete'
-          )
-        ]).pipe(Effect.asVoid)
+        logConnectionClosed(
+          'http',
+          Exit.isInterrupted(exit)
+            ? 'interrupted'
+            : Exit.isFailure(exit)
+              ? 'failed'
+              : 'request_complete'
+        )
       )
     )
 
     yield* Effect.annotateCurrentSpan({
       'http.response.status_code': response.status
     })
-    yield* networkTelemetry.message(
-      'http',
-      'out',
-      response.body.contentLength ?? 0
-    )
 
     return requestPath.startsWith('/api')
       ? HttpServerResponse.setHeader(response, 'x-request-id', requestId)

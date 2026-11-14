@@ -215,7 +215,6 @@ function navigationState(): DesktopNavigationState {
 
 function shellState(): DesktopShellState {
   const state: DesktopShellState = {
-    appVersion: app.getVersion(),
     packaged: app.isPackaged,
     platform: process.platform,
     fullscreen,
@@ -336,23 +335,6 @@ function isTrustedShellEvent(
 
 function selectedOrigin(): string | null {
   return hostSessions?.active?.computer.origin ?? null
-}
-
-function setTerminalSelectionActive(active: boolean): void {
-  const renderer = shellView?.webContents
-
-  if (renderer && !renderer.isDestroyed()) {
-    renderer.send('terminal-selection:active', active)
-  }
-}
-
-function releaseTerminalSelection(): void {
-  setTerminalSelectionActive(false)
-  const renderer = hostSessions?.active?.view.webContents
-
-  if (renderer && !renderer.isDestroyed()) {
-    renderer.send('terminal-selection:release')
-  }
 }
 
 function stopWindowAttention(): void {
@@ -624,9 +606,6 @@ function installRendererSecurity(
     callback({})
   )
   renderer.session.setDevicePermissionHandler(() => false)
-  renderer.on('did-finish-load', () =>
-    renderer.send('fullscreen-change', fullscreen)
-  )
 }
 
 const computerUpdateSchema = z.object({
@@ -766,7 +745,6 @@ function connectSelected(
   }
 
   if (hosts.active !== host) {
-    releaseTerminalSelection()
     hosts.active?.deactivate()
     hosts.active = host
   }
@@ -774,7 +752,6 @@ function connectSelected(
   broadcastState()
 
   if (host) {
-    host.view.webContents.send('fullscreen-change', fullscreen)
     host.connect(options.url, { force: options.force ?? false })
 
     if (!shellOverlayOpen && host.connection.status === 'ready') {
@@ -1454,22 +1431,10 @@ function createWindow(url?: string): BrowserWindow {
 
   window.on('enter-full-screen', () => {
     fullscreen = true
-
-    for (const host of hosts.visited.values()) {
-      host.view.webContents.send('fullscreen-change', true)
-    }
-
-    shell.webContents.send('fullscreen-change', true)
     broadcastState()
   })
   window.on('leave-full-screen', () => {
     fullscreen = false
-
-    for (const host of hosts.visited.values()) {
-      host.view.webContents.send('fullscreen-change', false)
-    }
-
-    shell.webContents.send('fullscreen-change', false)
     broadcastState()
   })
   window.on('focus', stopWindowAttention)
@@ -2268,20 +2233,6 @@ function registerIpc(): void {
 
     if (isTrustedRendererEvent(event) && parsed.success) {
       zoomPage(parsed.data)
-    }
-  })
-  ipcMain.on('terminal-selection:set-active', (event, active) => {
-    const parsedActive = z.boolean().safeParse(active)
-
-    if (!isTrustedRendererEvent(event) || !parsedActive.success) {
-      return
-    }
-
-    setTerminalSelectionActive(parsedActive.data)
-  })
-  ipcMain.on('shell:terminal-selection-release', (event) => {
-    if (isTrustedShellEvent(event)) {
-      releaseTerminalSelection()
     }
   })
   ipcMain.on('attention:request', (event) => {

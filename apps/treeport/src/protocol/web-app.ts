@@ -168,7 +168,7 @@ export const webAppInputSchema: Schema.Schema<WebAppInput> = Schema.Record({
   value: jsonValueSchema
 })
 
-export const createWebAppSchema = Schema.Struct({
+const createWebAppSchema = Schema.Struct({
   definitionId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
   input: Schema.optional(Schema.NullOr(webAppInputSchema)),
   launchCwd: Schema.optional(
@@ -288,8 +288,6 @@ export const openWebAppResponseSchema = Schema.Struct({
 export const webAppContextResponseSchema = Schema.Struct({
   context: webAppContextSchema
 })
-
-export const webAppResponseSchema = Schema.Struct({ app: webAppSchema })
 
 export const webAppDefinitionResponseSchema = Schema.Struct({
   definition: webAppDefinitionSchema

@@ -15,9 +15,7 @@ export const PROJECT_COLORS = [
   'pink'
 ] as const
 
-const projectColorSchema = Schema.Literal(...PROJECT_COLORS)
-
-export type ProjectColor = typeof projectColorSchema.Type
+export type ProjectColor = (typeof PROJECT_COLORS)[number]
 
 export type ProjectRecord = typeof projectRecordSchema.Type
 
@@ -46,10 +44,6 @@ export const registerProjectSchema = Schema.Struct({
   )
 })
 
-export const updateProjectSchema = Schema.Struct({
-  color: Schema.NullOr(projectColorSchema)
-})
-
 export const projectRecordSchema = Schema.mutable(
   Schema.Struct({
     id: Schema.String,
@@ -71,7 +65,6 @@ export const projectRecordSchema = Schema.mutable(
     defaultBranch: Schema.String,
     /** Fetch URL of the repository's origin remote, when it has one. */
     originUrl: nullableStringSchema,
-    color: Schema.NullOr(projectColorSchema),
     /** The built-in Home space: a folder project at the user's home directory. */
     isHome: Schema.Boolean,
     availability: Schema.Struct({

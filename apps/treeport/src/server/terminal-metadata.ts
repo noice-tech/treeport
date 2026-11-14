@@ -56,19 +56,19 @@ interface TerminalMetadataEntry extends TerminalRuntimeMetadata {
 
 export function acquireTerminalMetadataManager(
   service: TreeportService,
-  terminalHost: TerminalAttachmentBackend,
-  attentionStateStore?: TerminalAttentionStateStore
+  terminalHost: TerminalAttachmentBackend
 ): Effect.Effect<
   TerminalMetadataManager,
   never,
   Scope.Scope | ApplicationServices
 > {
   return Effect.gen(function* () {
-    const store =
-      attentionStateStore ??
+    const manager = new TerminalMetadataManager(
+      service,
+      terminalHost,
       new DatabaseTerminalAttentionStateStore(yield* DatabasePort)
+    )
 
-    const manager = new TerminalMetadataManager(service, terminalHost, store)
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => manager.dispose()).pipe(
         Effect.ensuring(manager.drain())

@@ -27,7 +27,6 @@ import {
   type TerminalHostServerOptions
 } from '../terminal-runtime/server.ts'
 import type { TerminalHostSessions } from '../terminal-runtime/sessions.ts'
-import { probeTerminalHostCompatibility } from '../terminal-runtime/preflight.ts'
 import { sessionStatusSchema } from '../terminal-runtime/session-protocol.ts'
 import { PersistentSession } from '../terminal-runtime/session-client.ts'
 import { hasKittyImage, restoreTestSnapshot } from './test-ghostty-snapshot.ts'
@@ -649,9 +648,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     expect(
       (await fs.readdir(sessionDirectory)).some((name) => name.endsWith('.gz'))
     ).toBe(true)
-    expect(
-      (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
-    ).toBe(true)
     await firstDaemon.renameTerminal(
       'terminal-host',
       'Renamed persistent terminal',
@@ -1176,9 +1172,6 @@ child.once('exit', (code) => process.exit(code ?? 1))
     })
     expect(processExists(unavailableStatus.ownerPid)).toBe(true)
     expect(processExists(unavailableStatus.pid)).toBe(true)
-    expect(
-      (await probeTerminalHostCompatibility(dataDir, runtimeDir)).compatible
-    ).toBe(true)
     await archivedDaemon.dispose()
     clients.delete(archivedDaemon)
 

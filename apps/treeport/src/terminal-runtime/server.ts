@@ -41,8 +41,6 @@ export interface TerminalHostServerOptions {
   readonly sessions: TerminalHostSessions
   readonly pid?: number
   readonly startedAt?: string
-  readonly launcherPath?: string
-  readonly binaryOutput?: boolean
 }
 
 export interface TerminalHostServerHandle {
@@ -118,10 +116,6 @@ export function makeTerminalHostServer(
       pid: options.pid ?? process.pid,
       socketPath: options.socketPath,
       startedAt: options.startedAt ?? new Date().toISOString()
-    }
-
-    if (options.launcherPath) {
-      Object.assign(record, { launcherPath: options.launcherPath })
     }
 
     const shuttingDown = yield* Ref.make(false)
@@ -297,10 +291,9 @@ export function makeTerminalHostServer(
                 return
               }
 
-              const encoded = yield* encodeTerminalHostFrame(
-                frame,
-                options.binaryOutput
-              ).pipe(Effect.mapError(serverError))
+              const encoded = yield* encodeTerminalHostFrame(frame).pipe(
+                Effect.mapError(serverError)
+              )
 
               if (
                 connection.queuedEventBytes + encoded.byteLength >
@@ -800,21 +793,6 @@ export function makeTerminalHostServer(
                     frame.id,
                     yield* options.sessions.terminalTitleState(input.terminalId)
                   )
-
-                  return
-                }
-
-                case 'signal': {
-                  const input = yield* decodeTerminalHostInput(
-                    'signal',
-                    frame.input
-                  )
-
-                  yield* options.sessions.signalTerminal(
-                    input.terminalId,
-                    input.signal
-                  )
-                  yield* respond<'signal'>(frame.id, null)
 
                   return
                 }

@@ -15,9 +15,9 @@ export interface AppConfig {
   gitPath: string
   apiUrl: string
   remoteUrl: string | null
-  appVersion?: string
-  instanceId?: string
-  installationMethod?: string
+  appVersion: string
+  instanceId: string
+  installationMethod: string
   webDist?: string
   webDevelopment: boolean
   defaultPackages?: string[]

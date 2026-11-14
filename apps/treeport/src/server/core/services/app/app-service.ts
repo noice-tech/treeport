@@ -24,7 +24,7 @@ import type {
 } from '#protocol/web-app'
 import type { ProjectRecord } from '#protocol/project'
 import type { WorktreeRecord } from '#protocol/worktree'
-import { and, asc, desc, eq, ne } from 'drizzle-orm'
+import { and, desc, eq, ne } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
@@ -653,42 +653,6 @@ export class AppService {
     )
   }
 
-  createWebApp(
-    worktreeId: string,
-    definitionId: string,
-    launch: WebAppLaunch = { input: null, cwd: null }
-  ): AppEffect<WebApp> {
-    const requireAvailableWorktree = this.requireAvailableWorktree.bind(this)
-
-    const effectiveWebAppDefinitions =
-      this.effectiveWebAppDefinitions.bind(this)
-
-    const requireWebAppPermissions = this.requireWebAppPermissions.bind(this)
-    const createValidatedWebApp = this.createValidatedWebApp.bind(this)
-
-    return Effect.gen(function* () {
-      const worktree = yield* requireAvailableWorktree(worktreeId)
-
-      const definition = (yield* effectiveWebAppDefinitions(worktreeId)).find(
-        (candidate) => candidate.id === definitionId
-      )
-
-      if (!definition) {
-        return yield* Effect.fail(
-          new DomainError(
-            'WEB_APP_DEFINITION_NOT_FOUND',
-            'Web app definition not found',
-            404
-          )
-        )
-      }
-
-      yield* requireWebAppPermissions(worktreeId, definition)
-
-      return yield* createValidatedWebApp(worktree, definition, launch)
-    })
-  }
-
   private createValidatedWebApp(
     worktree: WorktreeRecord,
     definition: WebAppDefinition,
@@ -1255,49 +1219,6 @@ export class AppService {
     })
   }
 
-  getBrowserAppListeners(appId: string): AppEffect<WorktreeListenerDiscovery> {
-    const getBrowserApp = this.getBrowserApp.bind(this)
-    const getWorktree = this.getWorktree.bind(this)
-
-    return Effect.gen(function* () {
-      const terminalHost = yield* TerminalHostPort
-      const networkListeners = yield* NetworkListenerPort
-      const app = yield* getBrowserApp(appId)
-      const worktree = yield* getWorktree(app.worktreeId)
-
-      const terminalProcesses = yield* terminalHost
-        .listProcesses(worktree.id)
-        .pipe(Effect.orDie)
-
-      return yield* networkListeners
-        .listeners({ worktreePath: worktree.path, terminalProcesses })
-        .pipe(Effect.orDie)
-    })
-  }
-
-  getAppListeners(appId: string): AppEffect<WorktreeListenerDiscovery> {
-    const getBrowserAppListeners = this.getBrowserAppListeners.bind(this)
-    const getWebAppListeners = this.getWebAppListeners.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-
-      const [browserApp] = yield* database
-        .execute('app.service.1065', (db) =>
-          db
-            .select({ id: browserApps.id })
-            .from(browserApps)
-            .where(eq(browserApps.id, appId))
-            .limit(1)
-        )
-        .pipe(Effect.orDie)
-
-      return yield* browserApp
-        ? getBrowserAppListeners(appId)
-        : getWebAppListeners(appId)
-    })
-  }
-
   getWebAppListeners(appId: string): AppEffect<WorktreeListenerDiscovery> {
     const getWebAppContext = this.getWebAppContext.bind(this)
     const getWorktree = this.getWorktree.bind(this)
@@ -1519,84 +1440,17 @@ export class AppService {
       }
 
       yield* requireWebAppPermissions(app.worktreeId, definition)
-      const encodedAppId = encodeURIComponent(appId)
 
-      return yield* webAppRuntime
-        .resolve(
-          definition,
-          requestedPath,
-          `/api/web-apps/${encodedAppId}/assets/`
-        )
-        .pipe(
-          Effect.catchTag('WebAppRuntimeError', Effect.die),
-          Effect.tap((result) =>
-            Effect.annotateCurrentSpan({
-              'treeport.web_app.development': result.development,
-              'treeport.web_app.resolution': result.kind
-            })
-          ),
-          Effect.withSpan('treeport.web_app.runtime.resolve')
-        )
-    }).pipe(Effect.withSpan('treeport.web_app.asset'))
-  }
-
-  listBrowserApps(): AppEffect<BrowserApp[]> {
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-
-      const rows = yield* database
-        .execute('app.service.1291', (db) =>
-          db
-            .select()
-            .from(browserApps)
-            .orderBy(asc(browserApps.createdAt), asc(browserApps.id))
-        )
-        .pipe(Effect.orDie)
-
-      return rows.map(mapBrowserApp)
-    })
-  }
-
-  listWebApps(): AppEffect<WebApp[]> {
-    const effectiveWebAppDefinitions =
-      this.effectiveWebAppDefinitions.bind(this)
-
-    const webAppPermissionsGranted = this.webAppPermissionsGranted.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-
-      const rows = yield* database
-        .execute('app.service.1309', (db) =>
-          db
-            .select()
-            .from(webApps)
-            .orderBy(asc(webApps.createdAt), asc(webApps.id))
-        )
-        .pipe(Effect.orDie)
-
-      return yield* Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          const definitions = yield* Effect.catchAll(
-            effectiveWebAppDefinitions(row.worktreeId),
-            () => Effect.succeed([])
-          )
-
-          const definition = definitions.find(
-            (candidate) => candidate.id === row.definitionId
-          )
-
-          return mapWebApp(
-            row,
-            definition?.permissions ?? [],
-            definition
-              ? yield* webAppPermissionsGranted(row.worktreeId, definition)
-              : false,
-            definition?.sandbox.enabled ?? true
-          )
-        })
+      return yield* webAppRuntime.resolve(definition, requestedPath).pipe(
+        Effect.catchTag('WebAppRuntimeError', Effect.die),
+        Effect.tap((result) =>
+          Effect.annotateCurrentSpan({
+            'treeport.web_app.resolution': result.kind
+          })
+        ),
+        Effect.withSpan('treeport.web_app.runtime.resolve')
       )
-    })
+    }).pipe(Effect.withSpan('treeport.web_app.asset'))
   }
 }
 

@@ -5,9 +5,7 @@ import { RpcClient } from '@effect/rpc'
 import { EVENT_PROTOCOL_VERSION } from '#protocol/socket'
 import { TreeportRpcs, type ProjectEventsItem } from '#protocol/rpc'
 import { treeportRpcClientLayer } from '#protocol/rpc-client'
-import type { BrowserApp } from '#protocol/browser'
 import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
-import type { WebApp } from '@treeport/app-sdk'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Scope from 'effect/Scope'
@@ -27,10 +25,6 @@ interface RpcFixture {
   readonly presence: WorkspacePresenceManager
   readonly metadataSnapshot: ReturnType<
     typeof vi.fn<() => TerminalRuntimeMetadata[]>
-  >
-  readonly listWebApps: ReturnType<typeof vi.fn<() => Effect.Effect<WebApp[]>>>
-  readonly listBrowserApps: ReturnType<
-    typeof vi.fn<() => Effect.Effect<BrowserApp[]>>
   >
   close(): Promise<void>
 }
@@ -65,17 +59,8 @@ async function fixture(): Promise<RpcFixture> {
     snapshot: metadataSnapshot
   })
 
-  const listWebApps = vi.fn<() => Effect.Effect<WebApp[]>>(() =>
-    Effect.succeed([])
-  )
-
-  const listBrowserApps = vi.fn<() => Effect.Effect<BrowserApp[]>>(() =>
-    Effect.succeed([])
-  )
-
   const service = testAccess<TreeportService>({
     events,
-    apps: { listWebApps, listBrowserApps },
     runEffect: (effect: Effect.Effect<unknown, unknown, any>) =>
       // SAFETY: The fixture's effects require only services installed above.
       Effect.runPromise(effect as Effect.Effect<unknown, unknown, never>)
@@ -100,8 +85,6 @@ async function fixture(): Promise<RpcFixture> {
     events,
     presence,
     metadataSnapshot,
-    listWebApps,
-    listBrowserApps,
     close: async () => {
       presence.dispose()
       await Effect.runPromise(Scope.close(scope, Exit.void))
@@ -232,35 +215,6 @@ describe('Effect RPC project event stream', () => {
 
   it('isolates clients while streaming durable apps and attention acknowledgements to both', async () => {
     const value = await fixture()
-    value.listWebApps.mockReturnValue(
-      Effect.succeed([
-        {
-          id: 'app_review',
-          kind: 'web',
-          worktreeId: 'wt',
-          definitionId: 'project:review',
-          title: 'Review',
-          launch: { input: null, cwd: null },
-          permissions: [],
-          sandbox: { enabled: true, allowSameOrigin: false },
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z'
-        }
-      ])
-    )
-    value.listBrowserApps.mockReturnValue(
-      Effect.succeed([
-        {
-          id: 'app_browser',
-          kind: 'browser',
-          worktreeId: 'wt',
-          title: 'Example',
-          url: 'https://example.com/',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z'
-        }
-      ])
-    )
 
     const identity = {
       source: 'tailscale' as const,
@@ -280,7 +234,9 @@ describe('Effect RPC project event stream', () => {
     value.presence.update(identity, viewer)
     const first = collect(value.url, 3)
     const second = collect(value.url, 3)
-    await vi.waitFor(() => expect(value.listWebApps).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(value.metadataSnapshot).toHaveBeenCalledTimes(2)
+    )
     value.events.publish('terminal.metadata', {
       terminalId: 'term',
       title: 'shell',
@@ -311,8 +267,6 @@ describe('Effect RPC project event stream', () => {
       expect(received[0]).toMatchObject({
         _tag: 'Snapshot',
         snapshot: {
-          webApps: [{ id: 'app_review' }],
-          browserApps: [{ id: 'app_browser', url: 'https://example.com/' }],
           presence: [{ identity, focusedAppId: 'app_review' }]
         }
       })

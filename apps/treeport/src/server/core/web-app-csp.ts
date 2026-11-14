@@ -66,7 +66,7 @@ export function webAppBrowserOrigin(input: WebAppRequestOrigin): string {
 }
 
 export function webAppContentSecurityPolicy(
-  policy: 'development' | 'immutable' | 'error',
+  policy: 'development' | 'error',
   browserOrigin: string,
   allowNetworkRequests = false
 ): string {
@@ -74,10 +74,6 @@ export function webAppContentSecurityPolicy(
 
   if (policy === 'development') {
     return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin} 'unsafe-inline'; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data: blob:; connect-src 'self' ${browserOrigin} ws: wss:${networkSources}; frame-src http: https:; frame-ancestors 'self' ${browserOrigin}`
-  }
-
-  if (policy === 'immutable') {
-    return `default-src 'self' ${browserOrigin}; script-src 'self' ${browserOrigin}; style-src 'self' ${browserOrigin} 'unsafe-inline'; img-src 'self' ${browserOrigin} data:; connect-src${allowNetworkRequests ? networkSources : " 'none'"}; frame-src http: https:; frame-ancestors 'self' ${browserOrigin}`
   }
 
   return `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' ${browserOrigin}`
