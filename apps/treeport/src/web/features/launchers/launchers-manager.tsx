@@ -5,7 +5,8 @@ import {
   TrashIcon,
   DocumentDuplicateIcon,
   ArrowLeftIcon,
-  CheckIcon
+  CheckIcon,
+  NoSymbolIcon
 } from '@heroicons/react/16/solid'
 import { QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
 import { TERMINAL_NAME_MAX_LENGTH } from '#protocol/terminal'
@@ -48,7 +49,18 @@ type LauncherValues = {
   command: string
   treeTitle: string
   closeOnSuccess: boolean
+  color: string | null
 }
+
+const LAUNCHER_COLORS = [
+  { name: 'Rose', value: '#fb7185' },
+  { name: 'Orange', value: '#fb923c' },
+  { name: 'Amber', value: '#fbbf24' },
+  { name: 'Green', value: '#34d399' },
+  { name: 'Sky', value: '#38bdf8' },
+  { name: 'Violet', value: '#a78bfa' },
+  { name: 'Pink', value: '#f472b6' }
+]
 
 type Draft = {
   editingId: string | null
@@ -96,7 +108,8 @@ export function LaunchersManager({
     (draft.values.name !== draft.savedValues.name ||
       draft.values.command !== draft.savedValues.command ||
       draft.values.treeTitle !== draft.savedValues.treeTitle ||
-      draft.values.closeOnSuccess !== draft.savedValues.closeOnSuccess)
+      draft.values.closeOnSuccess !== draft.savedValues.closeOnSuccess ||
+      draft.values.color !== draft.savedValues.color)
 
   const stale =
     draft?.editingId != null && selected?.updatedAt !== draft.loadedUpdatedAt
@@ -124,7 +137,8 @@ export function LaunchersManager({
             ...launcher.treeTitle.args
           ])
         : '',
-      closeOnSuccess: launcher?.closeOnSuccess ?? false
+      closeOnSuccess: launcher?.closeOnSuccess ?? false,
+      color: launcher?.color ?? null
     }
 
     setDraft({
@@ -159,7 +173,12 @@ export function LaunchersManager({
       launcherId: string | null
       input: Pick<
         Launcher,
-        'name' | 'executable' | 'args' | 'closeOnSuccess' | 'treeTitle'
+        | 'name'
+        | 'executable'
+        | 'args'
+        | 'closeOnSuccess'
+        | 'treeTitle'
+        | 'color'
       >
       expectedUpdatedAt: string | null
     }) =>
@@ -390,7 +409,8 @@ export function LaunchersManager({
                     closeOnSuccess: draft.values.closeOnSuccess,
                     treeTitle: treeTitleExecutable
                       ? { executable: treeTitleExecutable, args: treeTitleArgs }
-                      : null
+                      : null,
+                    color: draft.values.color
                   },
                   expectedUpdatedAt: draft.loadedUpdatedAt
                 })
@@ -452,6 +472,82 @@ export function LaunchersManager({
                     })
                   }}
                 />
+              </FormField>
+              <FormField>
+                <Label id="launcher-color-label">Icon color</Label>
+                <div
+                  role="radiogroup"
+                  aria-labelledby="launcher-color-label"
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  {[{ name: 'None', value: null }, ...LAUNCHER_COLORS].map(
+                    (option) => (
+                      <button
+                        key={option.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={draft.values.color === option.value}
+                        aria-label={option.name}
+                        title={option.name}
+                        disabled={busy}
+                        className="relative flex size-7 items-center justify-center rounded-full outline-none ring-offset-2 ring-offset-zinc-900 hover:ring-1 hover:ring-white/30 focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-checked:ring-2 aria-checked:ring-zinc-100 disabled:opacity-50 sm:size-6"
+                        onClick={() => {
+                          setDraft({
+                            ...draft,
+                            values: { ...draft.values, color: option.value }
+                          })
+                        }}
+                      >
+                        {option.value ? (
+                          <span
+                            className="size-full rounded-full"
+                            style={{ backgroundColor: option.value }}
+                          />
+                        ) : (
+                          <NoSymbolIcon className="size-full fill-zinc-500" />
+                        )}
+                        <span className="touch-target" aria-hidden="true" />
+                      </button>
+                    )
+                  )}
+                  <label
+                    className={cn(
+                      'relative flex size-7 cursor-pointer items-center justify-center rounded-full ring-offset-2 ring-offset-zinc-900 hover:ring-1 hover:ring-white/30 has-focus-visible:ring-2 has-focus-visible:ring-sidebar-ring sm:size-6',
+                      draft.values.color !== null &&
+                        !LAUNCHER_COLORS.some(
+                          (option) => option.value === draft.values.color
+                        ) &&
+                        'ring-2 ring-zinc-100'
+                    )}
+                    title="Custom color"
+                    style={{
+                      background:
+                        draft.values.color !== null &&
+                        !LAUNCHER_COLORS.some(
+                          (option) => option.value === draft.values.color
+                        )
+                          ? draft.values.color
+                          : 'conic-gradient(#fb7185, #fbbf24, #34d399, #38bdf8, #a78bfa, #fb7185)'
+                    }}
+                  >
+                    <input
+                      type="color"
+                      aria-label="Custom color"
+                      className="absolute inset-0 size-full cursor-pointer opacity-0"
+                      value={draft.values.color ?? '#a1a1aa'}
+                      disabled={busy}
+                      onChange={(event) => {
+                        setDraft({
+                          ...draft,
+                          values: {
+                            ...draft.values,
+                            color: event.target.value.toLowerCase()
+                          }
+                        })
+                      }}
+                    />
+                  </label>
+                </div>
               </FormField>
               <FormField>
                 <div className="flex items-center gap-1.5">
@@ -628,7 +724,10 @@ export function LaunchersManager({
                   onChange={(event) => {
                     setDraft({
                       ...draft,
-                      values: { ...draft.values, treeTitle: event.target.value }
+                      values: {
+                        ...draft.values,
+                        treeTitle: event.target.value
+                      }
                     })
                     setTreeTitleError(null)
                   }}
@@ -705,7 +804,8 @@ export function LaunchersManager({
                                   name: '',
                                   command: '',
                                   treeTitle: '',
-                                  closeOnSuccess: false
+                                  closeOnSuccess: false,
+                                  color: null
                                 }
                               })
                               nameInput.current?.focus()

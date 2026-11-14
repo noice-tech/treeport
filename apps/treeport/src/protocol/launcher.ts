@@ -47,6 +47,15 @@ const launcherTreeTitleSchema = Schema.NullOr(
   })
 )
 
+/** A `#rrggbb` tint for the launcher's icon; null keeps the neutral icon. */
+const launcherColorSchema = Schema.NullOr(
+  Schema.String.pipe(
+    Schema.pattern(/^#[0-9a-f]{6}$/i, {
+      message: () => 'Launcher colors must be #rrggbb hex values'
+    })
+  )
+)
+
 const launcherFields = {
   name: terminalNameSchema,
   executable: launcherExecutableSchema,
@@ -55,6 +64,9 @@ const launcherFields = {
     default: () => false
   }),
   treeTitle: Schema.optionalWith(launcherTreeTitleSchema, {
+    default: () => null
+  }),
+  color: Schema.optionalWith(launcherColorSchema, {
     default: () => null
   })
 }
@@ -157,6 +169,7 @@ export const updateLauncherSchema = Schema.Struct({
   ...launcherFields,
   closeOnSuccess: Schema.optional(Schema.Boolean),
   treeTitle: Schema.optional(launcherTreeTitleSchema),
+  color: Schema.optional(launcherColorSchema),
   expectedUpdatedAt: launcherRevisionSchema
 })
 
@@ -182,6 +195,7 @@ const launcherSchema = Schema.Struct({
   closeOnSuccess: Schema.Boolean,
   /** Runs after a new tree starts; its first output line becomes the tree title. */
   treeTitle: Schema.NullOr(launcherCommandSchema),
+  color: nullableStringSchema,
   createdAt: Schema.String,
   updatedAt: Schema.String
 })
@@ -211,6 +225,7 @@ const launcherDefinitionSchema = Schema.mutable(
     env: Schema.Record({ key: Schema.String, value: Schema.String }),
     closeOnSuccess: Schema.Boolean,
     treeTitle: Schema.NullOr(launcherCommandSchema),
+    color: nullableStringSchema,
     source: launcherDefinitionSourceSchema
   })
 )

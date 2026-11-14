@@ -278,6 +278,7 @@ export const launchers = sqliteTable(
     argsJson: text('args_json').notNull(),
     closeOnSuccess: integer('close_on_success').notNull().default(0),
     treeTitleJson: text('tree_title_json'),
+    color: text(),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull()
   },

@@ -1,0 +1,1 @@
+ALTER TABLE `terminal_presets` ADD `color` text;

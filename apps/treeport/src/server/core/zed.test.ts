@@ -217,6 +217,7 @@ describe('Zed worktree compatibility', () => {
           },
           closeOnSuccess: false,
           treeTitle: null,
+          color: null,
           source: { type: 'repository', format: 'zed' }
         },
         {
@@ -232,6 +233,7 @@ describe('Zed worktree compatibility', () => {
           },
           closeOnSuccess: false,
           treeTitle: null,
+          color: null,
           source: { type: 'repository', format: 'zed' }
         },
         {
@@ -247,6 +249,7 @@ describe('Zed worktree compatibility', () => {
           },
           closeOnSuccess: false,
           treeTitle: null,
+          color: null,
           source: { type: 'repository', format: 'zed' }
         }
       ],

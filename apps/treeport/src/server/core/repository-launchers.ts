@@ -109,6 +109,7 @@ export async function loadRepositoryLaunchers(
       env: {},
       closeOnSuccess: launcher.right.closeOnSuccess,
       treeTitle: launcher.right.treeTitle,
+      color: launcher.right.color,
       source: { type: 'repository', format: 'treeport' }
     })
   }

@@ -176,6 +176,13 @@
       "when": 1794397147437,
       "tag": "0024_project_home",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794647683676,
+      "tag": "0025_launcher_color",
+      "breakpoints": true
     }
   ]
 }

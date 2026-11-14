@@ -764,6 +764,7 @@ describe('SQLite migration and catalog ordering', () => {
         args: ['--continue'],
         closeOnSuccess: false,
         treeTitle: null,
+        color: null,
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01'
       }
@@ -1078,6 +1079,7 @@ describe('SQLite migration and catalog ordering', () => {
       await tx.run(
         sql`ALTER TABLE terminal_presets DROP COLUMN tree_title_json`
       )
+      await tx.run(sql`ALTER TABLE terminal_presets DROP COLUMN color`)
       await tx.run(sql`DROP TABLE __drizzle_migrations`)
       await tx.run(sql`
         CREATE TABLE schema_migrations (

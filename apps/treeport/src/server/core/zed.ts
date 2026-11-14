@@ -517,6 +517,7 @@ async function loadZedLauncherDefinitionsPromise(
       env: resolved.env,
       closeOnSuccess: false,
       treeTitle: null,
+      color: null,
       source: { type: 'repository', format: 'zed' }
     })
   }
