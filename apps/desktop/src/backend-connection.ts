@@ -1,8 +1,12 @@
 import {
+  computersListingSchema,
   phoneAccessResponseSchema,
   workspaceActivityResponseSchema
 } from './shell-metadata'
-import type { PhoneAccessResponse } from './desktop-contract'
+import type {
+  DiscoveredComputer,
+  PhoneAccessResponse
+} from './desktop-contract'
 import { z } from 'zod'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
@@ -97,4 +101,42 @@ export const checkHealth = (origin: string) =>
     Effect.timeoutOption('1500 millis'),
     Effect.map(Option.getOrNull),
     Effect.catchAll(() => Effect.succeed(null))
+  )
+
+export const syncComputers = (origin: string, saved: readonly string[]) =>
+  Effect.tryPromise(async (signal): Promise<DiscoveredComputer[]> => {
+    const endpoint = new URL('/api/computers', origin)
+    const response = await fetch(endpoint, { redirect: 'error', signal })
+
+    const listing = response.ok
+      ? (computersListingSchema.safeParse(await response.json()).data ?? null)
+      : null
+
+    if (!listing) {
+      return []
+    }
+
+    const known = new Set([
+      listing.self.url,
+      ...listing.computers.map((computer) => computer.url)
+    ])
+
+    for (const url of saved.filter((candidate) => !known.has(candidate))) {
+      await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url, restoreForgotten: false }),
+        redirect: 'error',
+        signal
+      }).catch(() => null)
+    }
+
+    return listing.computers.map((computer) => ({
+      name: computer.name,
+      origin: computer.url
+    }))
+  }).pipe(
+    Effect.timeoutOption('30 seconds'),
+    Effect.map(Option.getOrElse((): DiscoveredComputer[] => [])),
+    Effect.catchAll(() => Effect.succeed<DiscoveredComputer[]>([]))
   )

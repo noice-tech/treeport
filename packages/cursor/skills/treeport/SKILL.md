@@ -84,6 +84,18 @@ By default, Treeport bases new trees on the fetched remote default branch. Use `
 
 If creation reports `terminalError` or `setupError`, the tree may already exist. Report the retained tree and terminal IDs rather than blindly retrying or removing them. Never remove trees without explicit permission.
 
+## Other computers
+
+When the user asks to run something on another of their computers, run `treeport computers` and add `--computer <name>` to the usual commands. Context IDs, paths, and `.` do not apply there; find the tree on that computer first:
+
+```sh
+treeport --computer <name> worktree list
+treeport --computer <name> terminal create --worktree <remote-tree-id> --name <terminal-name> -- <program> <arg> ...
+treeport --computer <name> terminal wait <terminal-id> --until exit --timeout 10m
+```
+
+If the computer is not listed, ask the user for its Tailscale Serve URL and run `treeport computers add <url>`.
+
 ## Launchers
 
 Launchers are saved programs that the Treeport UI and `treeport launch` start in a tree. A lowercase `${name}` in an argument is an input that is filled in at launch. To register an agent CLI, check its `--help` for how it accepts an initial prompt, then run:

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage } from 'node:http'
+import os from 'node:os'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
@@ -33,6 +34,7 @@ import { acquireTerminalMetadataManager } from './terminal-metadata.ts'
 import { connectOrStartTerminalHost } from './terminal-host-client.ts'
 import { observeDaemonEventLoop } from './network-telemetry.ts'
 import { WebPushManager } from './web-push.ts'
+import { ComputerDirectory } from './computers.ts'
 import { AppServices } from './app-services.ts'
 import { PackageSystemPort } from './core/services/infrastructure/ports.ts'
 
@@ -210,6 +212,24 @@ export async function main(
       )
     )
 
+    const computers = await Effect.runPromise(
+      Scope.extend(
+        Effect.acquireRelease(
+          Effect.tryPromise(() =>
+            ComputerDirectory.open({
+              dataDir: config.dataDir,
+              port: config.port,
+              remoteUrl: config.remoteUrl,
+              fallbackName: os.hostname()
+            })
+          ).pipe(Effect.orDie),
+          (directory) =>
+            Effect.tryPromise(() => directory.dispose()).pipe(Effect.orDie)
+        ),
+        resourceScope
+      )
+    )
+
     const pendingAttention = new Set<string>()
 
     const unsubscribePush = terminalMetadata.subscribeLiveAttention(
@@ -297,6 +317,7 @@ export async function main(
       appServices,
       presence,
       push,
+      computers,
       rpcHttpApp
     })
 
@@ -493,6 +514,8 @@ export async function main(
         resolve()
       })
     })
+
+    computers.announce()
 
     /** starting -> ready; starting | ready -> stopping */
     type DaemonPhase = 'starting' | 'ready' | 'stopping'

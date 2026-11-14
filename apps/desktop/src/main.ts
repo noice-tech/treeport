@@ -28,7 +28,12 @@ import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
-import { checkActivity, checkHealth, phoneAccess } from './backend-connection'
+import {
+  checkActivity,
+  checkHealth,
+  phoneAccess,
+  syncComputers
+} from './backend-connection'
 import { HostSession, HostSessions } from './host-session'
 import { ComputerStore } from './computer-store'
 import { LocalServer } from './local-server'
@@ -43,6 +48,7 @@ import type {
   DesktopNavigationDirection,
   DesktopNavigationState,
   DesktopShellState,
+  DiscoveredComputer,
   RemoteUpdateState
 } from './desktop-contract'
 import { filePathFromUrl } from './file-url'
@@ -139,6 +145,7 @@ const seedComputerUrl =
 
 let mainWindow: BrowserWindow | null = null
 let hostSessions: HostSessions | null = null
+let discoveredComputers: DiscoveredComputer[] = []
 let shellView: WebContentsView | null = null
 let shellOverlayOpen = false
 let windowState: WindowState | null = null
@@ -213,6 +220,9 @@ function shellState(): DesktopShellState {
     platform: process.platform,
     fullscreen,
     computers: store?.summaries() ?? [],
+    discoveredComputers: discoveredComputers.filter(
+      (computer) => !store?.findByOrigin(computer.origin)
+    ),
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
     updatesPaused: hostSessions?.active?.updatesPaused ?? false,
     localServer: localServer?.state ?? null,
@@ -711,6 +721,28 @@ function connectSelected(
           }
         },
         ready: () => {
+          desktopRuntime.fork(
+            syncComputers(
+              computer.origin,
+              (store?.summaries() ?? [])
+                .filter(
+                  (saved) => !saved.loopback && saved.origin !== computer.origin
+                )
+                .map((saved) => saved.origin)
+            ).pipe(
+              Effect.map((found) => {
+                discoveredComputers = [
+                  ...discoveredComputers.filter(
+                    (known) =>
+                      !found.some((item) => item.origin === known.origin)
+                  ),
+                  ...found
+                ]
+                broadcastState()
+              })
+            )
+          )
+
           if (
             hostSessions === hosts &&
             hosts.active === created &&

@@ -170,6 +170,35 @@ export function ComputerSelector({
               )
             })}
           </DropdownMenu.RadioGroup>
+          {state.discoveredComputers.length > 0 && (
+            <DropdownMenu.Group>
+              <DropdownMenu.Label className="px-2.5 pt-2 pb-0.5 text-[0.6875rem] font-medium text-zinc-500">
+                Your other computers
+              </DropdownMenu.Label>
+              {state.discoveredComputers.map((computer) => (
+                <DropdownMenu.Item
+                  key={computer.origin}
+                  onSelect={() =>
+                    void window.treeportShell.addComputer(computer.origin)
+                  }
+                  className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-zinc-200 outline-none data-[highlighted]:bg-white/8"
+                >
+                  <Globe2Icon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 stroke-zinc-400"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[0.8125rem] font-medium text-zinc-100">
+                      {computer.name}
+                    </div>
+                    <div className="truncate text-xs text-zinc-500">
+                      {computer.origin}
+                    </div>
+                  </div>
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Group>
+          )}
           <DropdownMenu.Separator className="h-px shrink-0 bg-white/8" />
           <DropdownMenu.Group>
             <DropdownMenu.Item
