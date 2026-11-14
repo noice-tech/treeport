@@ -60,7 +60,6 @@ type ProjectApi = Pick<
   | 'listRecentProjects'
   | 'openProject'
   | 'pruneDecorationSources'
-  | 'refreshProject'
   | 'reconcile'
   | 'registerProject'
   | 'requestWorkspaceOpen'

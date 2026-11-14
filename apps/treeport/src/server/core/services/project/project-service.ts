@@ -30,7 +30,6 @@ import {
   TerminalHostPort
 } from '../infrastructure/ports.ts'
 import { DatabasePort } from '../../database.ts'
-import { GitPort } from '../../git.ts'
 import { TerminalState } from '../terminal/terminal-state.ts'
 import { ProjectDirectoryService } from './project-directory-service.ts'
 import { ProjectFolderIdentities } from './project-folder-identities.ts'
@@ -478,86 +477,6 @@ export class ProjectService {
     ApplicationServices
   > {
     return this.directory.browseDirectory(inputPath, showHidden)
-  }
-
-  refreshProject(
-    projectId: string
-  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
-      const git = yield* GitPort
-      const locks = yield* MutationLocks
-      const packages = yield* PackageSystemPort
-      const observations = yield* ProjectObservationOperations
-      const projectStore = yield* ProjectStore
-      const worktreeMutations = yield* WorktreeMutations
-      yield* projectStore.requireOpenProject(projectId)
-
-      if (yield* worktreeMutations.isBusy(projectId)) {
-        return yield* Effect.fail(
-          new DomainError(
-            'PROJECT_BUSY',
-            'Project is already being modified',
-            409
-          )
-        )
-      }
-
-      return yield* Effect.acquireUseRelease(
-        locks
-          .tryAcquire({ projectId })
-          .pipe(
-            Effect.flatMap((acquired) =>
-              acquired
-                ? Effect.void
-                : Effect.fail(
-                    new DomainError(
-                      'PROJECT_BUSY',
-                      'Project is already being modified',
-                      409
-                    )
-                  )
-            )
-          ),
-        () =>
-          Effect.gen(function* () {
-            const project = yield* observations.observeAvailableProject(
-              yield* projectStore.getProject(projectId)
-            )
-
-            if (project.kind === 'repository') {
-              const defaultBranch = yield* git
-                .defaultBranch(project.repositoryPath)
-                .pipe(Effect.orDie)
-
-              yield* database
-                .execute('project.service.446', (db) =>
-                  db.run(sql`
-                  UPDATE projects
-                  SET default_branch = ${defaultBranch}, updated_at = ${now()}
-                  WHERE id = ${projectId}
-                `)
-                )
-                .pipe(Effect.orDie)
-            }
-
-            yield* observations.reconcile()
-            const currentProject = yield* projectStore.getProject(projectId)
-            yield* packages.registerProject(currentProject)
-            yield* invalidateProjectsSnapshot()
-            yield* Effect.sync(() => {
-              events.publish('project.updated', { projectId })
-            })
-
-            return yield* projectStore.getProject(projectId)
-          }),
-        () => locks.release({ projectId })
-      )
-    })
   }
 
   openProject(

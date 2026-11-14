@@ -1485,22 +1485,6 @@ export function createApp({
       })
     ),
     route(
-      'POST',
-      '/api/projects/:projectId/refresh',
-      Effect.gen(function* () {
-        const params = yield* routeParams
-        yield* operation(() =>
-          service.projects.refreshProject(params.projectId!)
-        )
-
-        return jsonContractResponse(projectResponseSchema, {
-          project: yield* operation(() =>
-            service.projects.getProjectSnapshot(params.projectId!)
-          )
-        })
-      })
-    ),
-    route(
       'DELETE',
       '/api/projects/:projectId',
       Effect.gen(function* () {
