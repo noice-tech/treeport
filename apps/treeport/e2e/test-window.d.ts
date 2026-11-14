@@ -8,6 +8,7 @@ declare global {
     | 'new-app'
     | 'close-app'
     | 'toggle-apps-panel'
+    | 'toggle-full-view'
     | 'focus-location'
     | 'find-in-page'
     | 'select-previous-worktree'

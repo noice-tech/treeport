@@ -198,6 +198,7 @@ const desktopBridge = Object.freeze({
           'new-app',
           'close-app',
           'toggle-apps-panel',
+          'toggle-full-view',
           'focus-location',
           'find-in-page',
           'reload',
