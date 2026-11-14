@@ -5,7 +5,8 @@ const LOG_LIMIT_BYTES = 5 * 1024 * 1024
 
 export function appendDaemonLog(
   logPath: string,
-  value: string | Uint8Array
+  value: string | Uint8Array,
+  limitBytes = LOG_LIMIT_BYTES
 ): void {
   fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
 
@@ -13,20 +14,17 @@ export function appendDaemonLog(
     // eslint-disable-next-line anti-slop/no-runtime-typeof -- Normalize Node's documented string/byte output contract at the file boundary.
     typeof value === 'string' ? Buffer.from(value) : Buffer.from(value)
 
-  if (bytes.byteLength > LOG_LIMIT_BYTES) {
+  if (bytes.byteLength > limitBytes) {
     const notice = Buffer.from(
       '[Treeport log chunk truncated; retaining its tail]\n'
     )
 
-    bytes = Buffer.concat([
-      notice,
-      bytes.subarray(-LOG_LIMIT_BYTES + notice.length)
-    ])
+    bytes = Buffer.concat([notice, bytes.subarray(-limitBytes + notice.length)])
   }
 
   const size = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0
 
-  if (size > 0 && size + bytes.byteLength > LOG_LIMIT_BYTES) {
+  if (size > 0 && size + bytes.byteLength > limitBytes) {
     fs.rmSync(`${logPath}.1`, { force: true })
     fs.renameSync(logPath, `${logPath}.1`)
   }
