@@ -29,6 +29,7 @@ interface LocalPaths {
   runtimeDir: string
   statePath: string
   logPath: string
+  webTracePath: string
 }
 
 function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
@@ -55,7 +56,8 @@ function localPaths(env: NodeJS.ProcessEnv = process.env): LocalPaths {
     dataDir,
     runtimeDir,
     statePath: path.join(runtimeDir, 'daemon.json'),
-    logPath: path.join(dataDir, 'logs', 'daemon.log')
+    logPath: path.join(dataDir, 'logs', 'daemon.log'),
+    webTracePath: path.join(dataDir, 'logs', 'web-trace.jsonl')
   }
 }
 
@@ -226,8 +228,13 @@ export async function readDaemonLogs(
   const paths = await resolveDaemonLogPaths(targetApiUrl)
 
   const value = await tailDaemonLog(paths.logPath, lines)
+  const webTraces = await tailDaemonLog(paths.webTracePath, lines)
 
-  return value
+  const daemonSection = value
     ? `=== ${paths.logPath} (including retained history) ===\n${value}\nAn absent exit event does not prove a crash; termination may be unknown. For supervisor evidence, check its logs and OS logs.\n`
     : `No daemon logs found at ${paths.logPath}. Check your supervisor for startup diagnostics.\n`
+
+  return webTraces
+    ? `${daemonSection}\n=== ${paths.webTracePath} (including retained history) ===\n${webTraces}\n`
+    : daemonSection
 }
