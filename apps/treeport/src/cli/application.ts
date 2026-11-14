@@ -1872,7 +1872,7 @@ async function main(args: string[]): Promise<void> {
 
   const projectCommand = program
     .command('project')
-    .description('Register and list projects')
+    .description('Register, list, inspect, and remove projects')
 
   projectCommand.action(() => {
     throw new CliError(projectCommand.helpInformation(), 2)
@@ -1940,6 +1940,85 @@ async function main(args: string[]): Promise<void> {
             `${project.id}\t${project.name}\t${project.kind}\t${project.rootPath}`
         )
         .join('\n')
+    )
+  })
+
+  const projectInspectCommand = projectCommand
+    .command('inspect')
+    .description('Show project details and its trees')
+    .argument('[id-or-path-or-dot]', 'project to inspect', '.')
+    .option('--json', 'emit machine-readable JSON')
+
+  projectInspectCommand.action(async (identifier: string) => {
+    const project = await resolveProject(identifier)
+    print(project, () =>
+      [
+        `Project:  ${project.name} (${project.id})`,
+        `Kind:     ${project.kind}`,
+        `Path:     ${project.rootPath}`,
+        ...(project.kind === 'repository'
+          ? [
+              `Branch:   ${project.defaultBranch || '—'}`,
+              `Origin:   ${project.originUrl ?? '—'}`
+            ]
+          : []),
+        `Status:   ${project.availability.state}${project.availability.message ? ` (${project.availability.message})` : ''}`,
+        `Trees:    ${project.worktrees.length}`,
+        ...project.worktrees.map(
+          (worktree) =>
+            `  ${worktree.id}\t${worktree.name}\t${worktree.terminals.length} terminals\t${worktree.path}`
+        )
+      ].join('\n')
+    )
+  })
+
+  const projectRemoveCommand = projectCommand
+    .command('remove')
+    .description(
+      'Unregister a project without deleting its files; stops its terminals'
+    )
+    .argument('<id-or-path-or-dot>', 'project to remove')
+    .option('--force', 'confirm stopping the project terminals')
+    .option('--json', 'emit machine-readable JSON')
+
+  projectRemoveCommand.action(async (identifier: string) => {
+    const { force } = projectRemoveCommand.opts<{ force?: boolean }>()
+
+    const exactRootPath =
+      identifier === '.' ? null : await canonical(identifier)
+
+    const project =
+      identifier === '.'
+        ? await resolveProject(identifier)
+        : (await projects()).find(
+            (item) => item.id === identifier || item.rootPath === exactRootPath
+          )
+
+    if (!project) {
+      throw new CliError(`No registered project matches ${identifier}`, 5)
+    }
+
+    const terminalCount = project.worktrees.reduce(
+      (count, worktree) => count + worktree.terminals.length,
+      0
+    )
+
+    if (terminalCount && !force) {
+      throw new CliError(
+        `Removing ${project.name} stops ${terminalCount} terminal${terminalCount === 1 ? '' : 's'}.\nRe-run with --force to confirm removal.`,
+        5
+      )
+    }
+
+    await request(
+      `/api/projects/${encodeURIComponent(project.id)}`,
+      okResponseSchema,
+      { method: 'DELETE' }
+    )
+
+    print(
+      { ok: true, projectId: project.id },
+      () => `Removed ${project.name} (${project.id})`
     )
   })
 
