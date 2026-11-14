@@ -119,5 +119,6 @@ export type DesktopBridge = Readonly<
     ) => () => void
     requestAttention: () => void
     setTheme: (theme: TreeportTheme) => void
+    setUpdatesPaused: (paused: boolean) => void
   }>
 >

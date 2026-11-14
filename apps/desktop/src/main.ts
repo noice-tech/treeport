@@ -214,6 +214,7 @@ function shellState(): DesktopShellState {
     fullscreen,
     computers: store?.summaries() ?? [],
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
+    updatesPaused: hostSessions?.active?.updatesPaused ?? false,
     localServer: localServer?.state ?? null,
     remoteUpdates: [...remoteUpdates.values()],
     navigation: navigationState(),
@@ -2266,6 +2267,17 @@ function registerIpc(): void {
     theme = parsed.data
     nativeTheme.themeSource = theme.mode === 'auto' ? 'system' : theme.mode
     applyWindowChrome()
+    broadcastState()
+  })
+  ipcMain.on('desktop:set-updates-paused', (event, value) => {
+    const host = hostSessions?.sender(event)
+    const parsed = z.boolean().safeParse(value)
+
+    if (!host || !parsed.success) {
+      return
+    }
+
+    host.updatesPaused = parsed.data
     broadcastState()
   })
 }

@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
   type MouseEvent
 } from 'react'
+import { LoaderCircleIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   ArrowPathIcon,
@@ -615,12 +616,17 @@ export function TerminalView({
           {(snapshot.degraded || snapshot.fileTransfer) && (
             <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
               {snapshot.degraded && (
-                <span className="max-w-[calc(100%-1.5rem)] rounded-full bg-zinc-900/90 px-3 py-1 text-center text-xs text-amber-200 shadow ring-1 ring-amber-400/20">
-                  {snapshot.error
-                    ? `${snapshot.error} Retrying…`
-                    : snapshot.phase === 'connecting'
-                      ? 'Connecting…'
-                      : 'Reconnecting…'}
+                <span
+                  className="flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-full bg-zinc-800/90 py-1.5 pr-3 pl-2.5 text-xs text-amber-200 backdrop-blur-sm"
+                  title={snapshot.error ?? undefined}
+                >
+                  <LoaderCircleIcon
+                    className="size-3.5 shrink-0 motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                  {snapshot.phase === 'connecting'
+                    ? 'Connecting…'
+                    : 'Reconnecting…'}
                 </span>
               )}
               {snapshot.fileTransfer && (
@@ -657,13 +663,13 @@ export function TerminalView({
           )}
           {snapshot.phase === 'closed' && snapshot.error && (
             <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-              <div className="flex items-center gap-2 rounded-full bg-rose-950/95 px-3 py-1 text-xs text-rose-100 shadow ring-1 ring-rose-400/30">
-                <span>{snapshot.error}</span>
+              <div className="flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-full bg-zinc-800/90 py-1 pr-1 pl-3 text-xs text-amber-200 backdrop-blur-sm">
+                <span className="min-w-0">{snapshot.error}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-xs text-rose-100 hover:bg-rose-900 active:bg-rose-800"
+                  className="h-6 shrink-0 rounded-full bg-white/8 px-2 text-xs text-zinc-100 hover:bg-white/14 active:bg-white/18"
                   onClick={() => activeSession?.retry()}
                 >
                   Retry

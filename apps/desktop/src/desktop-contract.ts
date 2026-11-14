@@ -95,6 +95,7 @@ export interface DesktopShellState {
   selectedComputerId?: string
   computers: ComputerSummary[]
   connection: ConnectionState
+  updatesPaused: boolean
   localServer: LocalServerState | null
   remoteUpdates: RemoteUpdateState[]
   navigation: DesktopNavigationState

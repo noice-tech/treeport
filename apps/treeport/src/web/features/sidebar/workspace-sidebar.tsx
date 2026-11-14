@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { WifiOffIcon } from 'lucide-react'
 import {
   Bars3Icon,
   MinusIcon,
@@ -6,6 +7,12 @@ import {
   XMarkIcon
 } from '@heroicons/react/16/solid'
 import type { TerminalRecord } from '#protocol/terminal'
+import { Button } from '../../components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from '../../components/ui/popover'
 import {
   Sidebar,
   SidebarContent,
@@ -22,6 +29,7 @@ export interface WorkspaceSidebarProps {
   projectSwitcher: ReactNode
   settingsMenu: ReactNode
   notificationCenter: ReactNode
+  updatesPaused: boolean
   children: ReactNode
 }
 
@@ -29,6 +37,7 @@ export function WorkspaceSidebar({
   projectSwitcher,
   settingsMenu,
   notificationCenter,
+  updatesPaused,
   children
 }: WorkspaceSidebarProps) {
   return (
@@ -42,6 +51,34 @@ export function WorkspaceSidebar({
       <SidebarHeader className="gap-0 p-0 max-[700px]:border-b max-[700px]:border-white/8">
         <div className="flex items-center gap-1 p-2 max-[700px]:h-10 max-[700px]:px-1.5 max-[700px]:py-1">
           <div className="min-w-0 flex-1">{projectSwitcher}</div>
+          {updatesPaused ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 bg-amber-500/12 text-xs text-amber-200 hover:bg-amber-500/18 [&_svg]:size-3.5"
+                >
+                  <WifiOffIcon aria-hidden="true" />
+                  Offline
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                className="grid w-72 gap-0.5 p-2.5"
+                aria-label="Can’t reach Treeport"
+              >
+                <div className="text-[0.8125rem] font-medium text-zinc-100">
+                  Can’t reach Treeport
+                </div>
+                <div className="text-xs text-zinc-400">
+                  Project updates are paused. You’re seeing the last known
+                  state. Treeport keeps reconnecting in the background.
+                </div>
+              </PopoverContent>
+            </Popover>
+          ) : null}
           <div className="flex shrink-0">{settingsMenu}</div>
           <div className="max-[700px]:hidden">{notificationCenter}</div>
           <div className="flex w-9 shrink-0 justify-center min-[701px]:hidden">
