@@ -381,7 +381,7 @@ export function NewAppDialog({
                     }}
                   >
                     <CommandLineIcon
-                      className="size-4 shrink-0 fill-accent-400 opacity-80 transition-opacity in-data-selected:opacity-100"
+                      className="size-4 shrink-0 fill-accent-400"
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1 truncate text-left">
@@ -409,7 +409,7 @@ export function NewAppDialog({
                     }}
                   >
                     <GlobeAltIcon
-                      className="size-4 shrink-0 fill-accent-400 opacity-80 transition-opacity in-data-selected:opacity-100"
+                      className="size-4 shrink-0 fill-accent-400"
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1 truncate text-left">
@@ -455,7 +455,7 @@ export function NewAppDialog({
                     >
                       <WebAppIcon
                         icon={definition.icon}
-                        className="fill-zinc-300 opacity-80 transition-opacity in-data-selected:opacity-100"
+                        className="fill-zinc-300"
                       />
                       <span className="min-w-0 flex-1 truncate text-left">
                         {definition.title}
@@ -534,7 +534,7 @@ export function NewAppDialog({
                       }}
                     >
                       <CommandLineIcon
-                        className="size-4 shrink-0 fill-zinc-300 opacity-80 transition-opacity in-data-selected:opacity-100"
+                        className="size-4 shrink-0 fill-zinc-300"
                         style={
                           launcher.color ? { fill: launcher.color } : undefined
                         }
