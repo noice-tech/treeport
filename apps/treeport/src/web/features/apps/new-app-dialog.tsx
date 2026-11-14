@@ -381,7 +381,7 @@ export function NewAppDialog({
                     }}
                   >
                     <CommandLineIcon
-                      className="size-4 shrink-0 fill-emerald-400 opacity-80 transition-opacity in-data-selected:opacity-100"
+                      className="size-4 shrink-0 fill-accent-400 opacity-80 transition-opacity in-data-selected:opacity-100"
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1 truncate text-left">
