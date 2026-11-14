@@ -1425,6 +1425,58 @@ export function BrowserAppWorkspace({
     navigate(inputValue)
   }
 
+  const copySelection = () => {
+    if (!connectionRef.current || inputBlocked) {
+      setError('Copy is unavailable. Reconnect, then retry.')
+
+      return
+    }
+
+    setClipboardToCopy(null)
+    setError(null)
+    const requestId = crypto.randomUUID()
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
+      pendingCopiesRef.current.set(requestId, { resolve, reject })
+      timer = setTimeout(
+        () =>
+          reject(new Error('Copy timed out. Select the text and try again.')),
+        10_000
+      )
+      send({ type: 'takeControl' })
+      send({ type: 'copy', requestId })
+    }).finally(() => {
+      if (timer !== null) {
+        clearTimeout(timer)
+      }
+
+      pendingCopiesRef.current.delete(requestId)
+    })
+
+    void result
+      .then((clipboard) => {
+        if (clipboard === null) {
+          return
+        }
+
+        // EXTERNAL: A browser may require a fresh gesture once the remote response has
+        // arrived. Retain the exact payload for the explicit retry button.
+        setClipboardToCopy(clipboard)
+
+        return writeBrowserClipboard(clipboard).then(() =>
+          setClipboardToCopy(null)
+        )
+      })
+      .catch((cause: unknown) =>
+        setError(
+          cause instanceof Error
+            ? `Couldn’t copy: ${cause.message}`
+            : 'Couldn’t copy the selected content. Try again.'
+        )
+      )
+  }
+
   const key = (
     event: KeyboardEvent<HTMLVideoElement>,
     phase: 'down' | 'up'
@@ -1451,55 +1503,7 @@ export function BrowserAppWorkspace({
         return
       }
 
-      if (!connectionRef.current || inputBlocked) {
-        setError('Copy is unavailable. Reconnect, then retry.')
-
-        return
-      }
-
-      setClipboardToCopy(null)
-      setError(null)
-      const requestId = crypto.randomUUID()
-      let timer: ReturnType<typeof setTimeout> | null = null
-
-      const result = new Promise<BrowserClipboard | null>((resolve, reject) => {
-        pendingCopiesRef.current.set(requestId, { resolve, reject })
-        timer = setTimeout(
-          () =>
-            reject(new Error('Copy timed out. Select the text and try again.')),
-          10_000
-        )
-        send({ type: 'takeControl' })
-        send({ type: 'copy', requestId })
-      }).finally(() => {
-        if (timer !== null) {
-          clearTimeout(timer)
-        }
-
-        pendingCopiesRef.current.delete(requestId)
-      })
-
-      void result
-        .then((clipboard) => {
-          if (clipboard === null) {
-            return
-          }
-
-          // EXTERNAL: A browser may require a fresh gesture once the remote response has
-          // arrived. Retain the exact payload for the explicit retry button.
-          setClipboardToCopy(clipboard)
-
-          return writeBrowserClipboard(clipboard).then(() =>
-            setClipboardToCopy(null)
-          )
-        })
-        .catch((cause: unknown) =>
-          setError(
-            cause instanceof Error
-              ? `Couldn’t copy: ${cause.message}`
-              : 'Couldn’t copy the selected content. Try again.'
-          )
-        )
+      copySelection()
 
       return
     }
@@ -2740,6 +2744,21 @@ export function BrowserAppWorkspace({
                     focusPage()
                   }}
                 >
+                  {contextMenu?.hasSelection ? (
+                    <>
+                      <ContextMenuGroup>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            dismissContext()
+                            copySelection()
+                          }}
+                        >
+                          Copy
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                      <ContextMenuSeparator />
+                    </>
+                  ) : null}
                   {contextMenu?.linkUrl ? (
                     <>
                       <ContextMenuGroup>

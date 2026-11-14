@@ -80,7 +80,8 @@ export const browserContextResultSchema = Schema.Struct({
   contextId: Schema.NullOr(browserRequestIdSchema),
   linkUrl: Schema.NullOr(Schema.String.pipe(Schema.maxLength(16_384))),
   canOpenLink: Schema.Boolean,
-  canInspect: Schema.Boolean
+  canInspect: Schema.Boolean,
+  hasSelection: Schema.Boolean
 })
 
 export type BrowserContextResult = Schema.Schema.Type<

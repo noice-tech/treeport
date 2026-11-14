@@ -930,18 +930,30 @@ export class PlaywrightBrowser {
               interface CapturedContextMenu {
                 event: MouseEvent | null
                 linkUrl: string | null
+                hasSelection: boolean
                 listener: (event: MouseEvent) => void
               }
 
               const captured: CapturedContextMenu = {
                 event: null,
                 linkUrl: null,
+                hasSelection: false,
                 listener: (event: MouseEvent) => {
                   if (!event.isTrusted) {
                     return
                   }
 
                   captured.event = event
+
+                  // EXTERNAL: Document selections exclude text selected inside
+                  // inputs and textareas, so check the focused field as well.
+                  const field = document.activeElement
+                  captured.hasSelection =
+                    (field instanceof HTMLInputElement ||
+                    field instanceof HTMLTextAreaElement
+                      ? (field.selectionStart ?? 0) !==
+                        (field.selectionEnd ?? 0)
+                      : false) || !(window.getSelection()?.isCollapsed ?? true)
 
                   for (const node of event.composedPath()) {
                     if (
@@ -966,7 +978,11 @@ export class PlaywrightBrowser {
         )
       )
 
-      let captured: { prevented: boolean; linkUrl: string | null } | null = null
+      let captured: {
+        prevented: boolean
+        linkUrl: string | null
+        hasSelection: boolean
+      } | null = null
 
       try {
         const hit = await this.cdp
@@ -995,6 +1011,7 @@ export class PlaywrightBrowser {
                 ? {
                     prevented: observed.event.defaultPrevented,
                     linkUrl: observed.linkUrl,
+                    hasSelection: observed.hasSelection,
                     x: observed.event.clientX,
                     y: observed.event.clientY
                   }
@@ -1063,7 +1080,8 @@ export class PlaywrightBrowser {
           contextId: null,
           linkUrl: null,
           canOpenLink: false,
-          canInspect: false
+          canInspect: false,
+          hasSelection: false
         }
       }
 
@@ -1079,7 +1097,8 @@ export class PlaywrightBrowser {
         linkUrl: context.linkUrl,
         canOpenLink:
           decodeUnknownOrNull(browserUrlSchema, context.linkUrl) !== null,
-        canInspect: context.backendNodeId !== null
+        canInspect: context.backendNodeId !== null,
+        hasSelection: captured.hasSelection
       }
     }
 
