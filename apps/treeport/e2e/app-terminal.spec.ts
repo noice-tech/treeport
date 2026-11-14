@@ -414,7 +414,13 @@ test.describe('desktop worktree and terminal workflows', () => {
   }) => {
     const mocked = await mockApp(page)
     await page.getByRole('button', { name: 'Pi, running', exact: true }).click()
-    await expect(page.getByText('Viewing', { exact: true })).toBeVisible()
+    await expect
+      .poll(() =>
+        mocked.terminal.messages.some(
+          (message) => message.type === 'take_control'
+        )
+      )
+      .toBe(true)
     await page.clock.install()
     {
       const socket = mocked.terminal.connection

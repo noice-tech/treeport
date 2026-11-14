@@ -42,6 +42,7 @@ import {
 import { cn } from './lib/utils'
 import { useIsMobile } from './hooks/use-mobile'
 import { useTerminalAutoFocus } from './terminal-focus'
+import { useOtherPersonViewing } from './features/presence/use-workspace-presence'
 import {
   terminalSessions,
   terminalInputWithModifiers,
@@ -261,6 +262,36 @@ export function TerminalView({
     session: activeSession,
     blocked: autoFocusBlocked
   })
+
+  const otherPersonViewing = useOtherPersonViewing(worktree?.id ?? null)
+
+  useEffect(() => {
+    const host = hostRef.current
+
+    if (
+      !activeSession ||
+      !host ||
+      otherPersonViewing ||
+      snapshot.phase !== 'ready'
+    ) {
+      return
+    }
+
+    const takeControl = () => {
+      if (document.hasFocus() && host.contains(document.activeElement)) {
+        activeSession.requestControl()
+      }
+    }
+
+    takeControl()
+    host.addEventListener('focusin', takeControl)
+    window.addEventListener('focus', takeControl)
+
+    return () => {
+      host.removeEventListener('focusin', takeControl)
+      window.removeEventListener('focus', takeControl)
+    }
+  }, [activeSession, otherPersonViewing, snapshot.phase])
 
   useEffect(() => {
     if (
@@ -532,7 +563,9 @@ export function TerminalView({
               </span>
             </div>
           )}
-          {snapshot.phase === 'ready' && !snapshot.controller ? (
+          {snapshot.phase === 'ready' &&
+          !snapshot.controller &&
+          otherPersonViewing ? (
             <div
               className="absolute top-3 right-24 z-10 py-1 text-sm text-zinc-400 sm:text-xs"
               title="Interact with the terminal to control it"
