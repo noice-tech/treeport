@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import {
   PRESENCE_HEARTBEAT_MS,
   type ViewerIdentity,
@@ -15,6 +23,43 @@ export interface WorkspacePresenceStore {
   subscribe(listener: () => void): () => void
   getSnapshot(): PresenceSnapshot
   setViewers(viewers: readonly WorkspacePresence[]): void
+}
+
+export const WorkspacePresenceContext =
+  createContext<WorkspacePresenceStore | null>(null)
+
+export function isOtherPerson(
+  viewer: WorkspacePresence,
+  identity: ViewerIdentity,
+  worktreeId: string
+): boolean {
+  return (
+    viewer.worktreeId === worktreeId &&
+    viewer.identity.source !== 'local' &&
+    (viewer.identity.source !== identity.source ||
+      viewer.identity.login !== identity.login)
+  )
+}
+
+export function useOtherPersonViewing(worktreeId: string | null): boolean {
+  const presence = useContext(WorkspacePresenceContext)
+
+  return useSyncExternalStore(
+    presence?.subscribe ?? (() => () => undefined),
+    () => {
+      const snapshot = presence?.getSnapshot()
+
+      return Boolean(
+        worktreeId &&
+        snapshot?.identity &&
+        snapshot.viewers.some(
+          (viewer) =>
+            viewer.visible &&
+            isOtherPerson(viewer, snapshot.identity!, worktreeId)
+        )
+      )
+    }
+  )
 }
 
 export function useWorkspacePresence(

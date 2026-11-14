@@ -8,7 +8,10 @@ import {
   PopoverContent,
   PopoverTrigger
 } from '../../components/ui/popover'
-import type { WorkspacePresenceStore } from './use-workspace-presence'
+import {
+  isOtherPerson,
+  type WorkspacePresenceStore
+} from './use-workspace-presence'
 
 export function WorkspaceViewers({
   worktree,
@@ -47,12 +50,7 @@ export function WorkspaceViewers({
 
   if (worktree && identity) {
     for (const viewer of mockViewer ? [...viewers, mockViewer] : viewers) {
-      if (
-        viewer.worktreeId !== worktree.id ||
-        viewer.identity.source === 'local' ||
-        (viewer.identity.source === identity.source &&
-          viewer.identity.login === identity.login)
-      ) {
+      if (!isOtherPerson(viewer, identity, worktree.id)) {
         continue
       }
 

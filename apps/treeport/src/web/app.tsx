@@ -70,7 +70,10 @@ import { useSidebar } from './components/ui/sidebar'
 import { METADATA_DEGRADED_GRACE_MS } from './metadata-sync'
 import { notifyError } from './features/notifications/error-notifications'
 import { useProjectEventsBridge } from './project-events-bridge'
-import { useWorkspacePresence } from './features/presence/use-workspace-presence'
+import {
+  useWorkspacePresence,
+  WorkspacePresenceContext
+} from './features/presence/use-workspace-presence'
 import { WorkspaceViewers } from './features/presence/workspace-viewers'
 import {
   projectsQueryKey,
@@ -1920,7 +1923,7 @@ function WorkspaceApp() {
   ])
 
   return (
-    <>
+    <WorkspacePresenceContext value={presence}>
       <WorkspaceWindowTitle
         projects={projects}
         selectedProject={selectedProject}
@@ -2314,6 +2317,6 @@ function WorkspaceApp() {
         onSkipCleanup={removeWithoutCleanup}
         onRetry={(worktree) => void retryRemoval(worktree)}
       />
-    </>
+    </WorkspacePresenceContext>
   )
 }
