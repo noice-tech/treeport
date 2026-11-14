@@ -26,7 +26,7 @@ export function launcherProvenance(launcher: LauncherDefinition): string {
     return 'Global'
   }
 
-  return `${launcher.source.scope === 'project' ? 'Repository' : 'Global'} · ${launcher.source.packageId}`
+  return launcher.source.scope === 'project' ? 'Repository' : 'Global'
 }
 
 export function launcherDisambiguator(
