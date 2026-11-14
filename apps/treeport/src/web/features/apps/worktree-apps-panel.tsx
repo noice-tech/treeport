@@ -248,6 +248,7 @@ export function AppsPanelToggle({
   onToggleFullView: () => void
 }) {
   const shortcut = isApplePlatform() ? '⌘B' : 'Ctrl+Alt+B'
+  const fullViewShortcut = isApplePlatform() ? '⌘⇧B' : 'Ctrl+Alt+Shift+B'
 
   return (
     <div className="absolute top-1 right-1 z-40 flex items-center gap-1">
@@ -269,7 +270,8 @@ export function AppsPanelToggle({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="end" sideOffset={8}>
-            {fullView ? 'Exit full view' : 'Enter full view'}
+            {fullView ? 'Exit full view' : 'Enter full view'} ·{' '}
+            {fullViewShortcut}
           </TooltipContent>
         </Tooltip>
       ) : null}

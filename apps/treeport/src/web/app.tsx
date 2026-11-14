@@ -1635,6 +1635,20 @@ function WorkspaceApp() {
     setPreserveTerminalFocusAppId(null)
   }
 
+  const toggleAppsPanelFullView = () => {
+    if (!selectedWorktree) {
+      return
+    }
+
+    if (!appsPanelOpen) {
+      toggleAppsPanel()
+    }
+
+    dismissToolPicker()
+    focusToolSurface()
+    setFullViewWorktreeId(appsPanelFullView ? null : selectedWorktree.id)
+  }
+
   useEffect(() => {
     if (desktopBridge?.onCommand) {
       return
@@ -1668,7 +1682,23 @@ function WorkspaceApp() {
         return
       }
 
-      if (event.isComposing || event.shiftKey || !modifierPressed) {
+      if (event.isComposing || !modifierPressed) {
+        return
+      }
+
+      if (event.shiftKey) {
+        if (
+          event.code === 'KeyB' &&
+          (usesMacKeyboard ? !event.altKey : event.altKey)
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+
+          if (!event.repeat && !actionsBlocked && selectedWorktree) {
+            toggleAppsPanelFullView()
+          }
+        }
+
         return
       }
 
@@ -1778,6 +1808,7 @@ function WorkspaceApp() {
     selectedProject,
     selectedWorktree,
     toggleAppsPanel,
+    toggleAppsPanelFullView,
     toolLaunchDisabled,
     appsPanelOpen,
     workspaceActionsBlocked,
@@ -1870,6 +1901,8 @@ function WorkspaceApp() {
         selectFocusedSurfaceByIndex(selectedTabIndex)
       } else if (command === 'toggle-apps-panel') {
         toggleAppsPanel()
+      } else if (command === 'toggle-full-view') {
+        toggleAppsPanelFullView()
       } else if (command === 'new-terminal') {
         if (toolSurfaceHasFocus) {
           if (!toolLaunchDisabled && !createBrowserApp.isPending) {
@@ -1916,6 +1949,7 @@ function WorkspaceApp() {
     selectFocusedSurfaceByIndex,
     selectWorktree,
     toggleAppsPanel,
+    toggleAppsPanelFullView,
     toolLaunchDisabled,
     appsPanelOpen,
     workspaceActionsBlocked,
@@ -2038,17 +2072,7 @@ function WorkspaceApp() {
             fullView={appsPanelFullView}
             disabled={!selectedProject || !selectedWorktree}
             onToggle={toggleAppsPanel}
-            onToggleFullView={() => {
-              if (!selectedWorktree || !appsPanelOpen) {
-                return
-              }
-
-              dismissToolPicker()
-              focusToolSurface()
-              setFullViewWorktreeId(
-                appsPanelFullView ? null : selectedWorktree.id
-              )
-            }}
+            onToggleFullView={toggleAppsPanelFullView}
           />
           <div
             className={cn(

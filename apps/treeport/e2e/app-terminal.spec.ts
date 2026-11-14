@@ -587,7 +587,7 @@ test.describe('desktop worktree and terminal workflows', () => {
 
     await rail.hover()
     await enter.hover()
-    await expect(tooltip).toHaveText('Enter full view')
+    await expect(tooltip).toHaveText(/^Enter full view · /)
     await toggle.click()
     await expect(app).toBeHidden()
     await toggle.click()

@@ -484,15 +484,19 @@ function installRendererSecurity(
 
     // SAFETY: The digit expression restricts the interpolated command to the DesktopCommand tab range.
     const command: DesktopCommand | undefined = input.alt
-      ? !input.shift && code === 'keyb' && process.platform !== 'darwin'
-        ? 'toggle-apps-panel'
+      ? code === 'keyb' && process.platform !== 'darwin'
+        ? input.shift
+          ? 'toggle-full-view'
+          : 'toggle-apps-panel'
         : undefined
       : input.shift
         ? code === 'bracketleft'
           ? 'select-previous-worktree'
           : code === 'bracketright'
             ? 'select-next-worktree'
-            : undefined
+            : code === 'keyb' && process.platform === 'darwin'
+              ? 'toggle-full-view'
+              : undefined
         : key === 'n'
           ? 'new-worktree'
           : key === 't'
