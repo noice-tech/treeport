@@ -35,8 +35,8 @@ declare global {
       startLocalServer: () => Promise<void>
       showLocalServerLogs: () => Promise<void>
       openLocalServerSource: () => Promise<void>
-      showUpdateLog: () => Promise<void>
-      dismissUpdate: () => Promise<void>
+      showUpdateLog: (computerId: string | null) => Promise<void>
+      dismissUpdate: (computerId: string | null) => Promise<void>
     }>
   }
 }
