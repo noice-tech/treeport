@@ -1362,68 +1362,6 @@ class PromiseGitAdapter {
       }
     )
   }
-
-  async isMerged(cwd: string, branch: string): Promise<boolean> {
-    const remoteDefaultBranch = await this.remoteDefaultBranch(cwd)
-
-    if (!remoteDefaultBranch) {
-      return false
-    }
-
-    const fetch = await this.runner.run({
-      executable: this.executable,
-      args: ['fetch', '--quiet', 'origin', remoteDefaultBranch],
-      cwd,
-      timeoutMs: 60_000
-    })
-
-    if (fetch.exitCode !== 0) {
-      return false
-    }
-
-    const merged = await this.runner.run({
-      executable: this.executable,
-      args: [
-        'merge-base',
-        '--is-ancestor',
-        branch,
-        `origin/${remoteDefaultBranch}`
-      ],
-      cwd,
-      timeoutMs: 15_000
-    })
-
-    return merged.exitCode === 0
-  }
-
-  async commitSummary(
-    cwd: string,
-    branch: string,
-    defaultBranch: string
-  ): Promise<{ ahead: number; behind: number } | null> {
-    const result = await this.runner.run({
-      executable: this.executable,
-      args: [
-        'rev-list',
-        '--left-right',
-        '--count',
-        `${defaultBranch}...${branch}`
-      ],
-      cwd,
-      timeoutMs: 15_000
-    })
-
-    if (result.exitCode !== 0) {
-      return null
-    }
-
-    const [behind = '0', ahead = '0'] = result.stdout.trim().split(/\s+/)
-
-    return {
-      ahead: Number.parseInt(ahead, 10),
-      behind: Number.parseInt(behind, 10)
-    }
-  }
 }
 
 export class GitError extends Data.TaggedError('GitError')<{
@@ -1490,12 +1428,6 @@ export class GitAdapter {
       try: (signal) => this.cancellation.run(signal, evaluate),
       catch: (cause) => new GitError(operation, cause)
     })
-  }
-
-  findRepositoryRoot(inputPath: string): GitEffect<string | null> {
-    return this.operation('findRepositoryRoot', () =>
-      this.implementation.findRepositoryRoot(inputPath)
-    )
   }
 
   findProjectRepositoryRoot(inputPath: string): GitEffect<string | null> {
@@ -1594,18 +1526,6 @@ export class GitAdapter {
   resolveMainCheckout(cwd: string): GitEffect<string> {
     return this.operation('resolveMainCheckout', () =>
       this.implementation.resolveMainCheckout(cwd)
-    )
-  }
-
-  currentBranch(cwd: string): GitEffect<string> {
-    return this.operation('currentBranch', () =>
-      this.implementation.currentBranch(cwd)
-    )
-  }
-
-  remoteDefaultBranch(cwd: string): GitEffect<string | null> {
-    return this.operation('remoteDefaultBranch', () =>
-      this.implementation.remoteDefaultBranch(cwd)
     )
   }
 
@@ -1723,22 +1643,6 @@ export class GitAdapter {
   ): GitEffect<GitFileDiff> {
     return this.operation('worktreeFileDiff', () =>
       this.implementation.worktreeFileDiff(cwd, defaultBranch, filePath, scope)
-    )
-  }
-
-  isMerged(cwd: string, branch: string): GitEffect<boolean> {
-    return this.operation('isMerged', () =>
-      this.implementation.isMerged(cwd, branch)
-    )
-  }
-
-  commitSummary(
-    cwd: string,
-    branch: string,
-    defaultBranch: string
-  ): GitEffect<{ ahead: number; behind: number } | null> {
-    return this.operation('commitSummary', () =>
-      this.implementation.commitSummary(cwd, branch, defaultBranch)
     )
   }
 }

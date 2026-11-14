@@ -14,10 +14,7 @@ import {
   okResponseSchema,
   uploadedFileResponseSchema
 } from '#protocol/api'
-import {
-  browserInstallResponseSchema,
-  openBrowserAppResponseSchema
-} from '#protocol/browser'
+import { openBrowserAppResponseSchema } from '#protocol/browser'
 import { decodeUnknownOrNull } from '#protocol/schema'
 import {
   directoryBrowseResponseSchema,
@@ -349,16 +346,6 @@ export const rpc = {
         ),
         schema: uploadedFileResponseSchema
       })
-    },
-    browser: {
-      install: {
-        $post: () =>
-          endpoint<{ message: string }>(
-            'POST',
-            '/api/browser/install',
-            browserInstallResponseSchema
-          )
-      }
     },
     projects: Object.assign(
       {

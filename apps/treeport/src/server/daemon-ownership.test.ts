@@ -16,7 +16,7 @@ afterEach(async () => {
   )
 })
 
-async function fixture(instanceId: string | undefined = 'instance-a') {
+async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'treeport-owner-'))
   temporary.push(root)
   const dataDir = path.join(root, 'data')
@@ -34,12 +34,9 @@ async function fixture(instanceId: string | undefined = 'instance-a') {
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
     appVersion: 'test',
+    instanceId: 'instance-a',
     installationMethod: 'test',
     webDevelopment: false
-  }
-
-  if (instanceId !== undefined) {
-    config.instanceId = instanceId
   }
 
   return { root, dataDir, runtimeDir, config }
@@ -49,18 +46,6 @@ const record = (instanceId: string, pid = process.pid) =>
   `${JSON.stringify({ pid, instanceId })}\n`
 
 describe('daemon ownership', () => {
-  it('does not mutate the filesystem without an instance id', async () => {
-    const { root, config } = await fixture()
-    delete config.instanceId
-
-    const error = await Effect.runPromise(
-      Effect.flip(Effect.scoped(acquireDaemonOwnership(config)))
-    )
-
-    expect(error.message).toContain('TREEPORT_INSTANCE_ID')
-    expect(await fs.readdir(root)).toEqual([])
-  })
-
   it('publishes atomically and releases files with its scope', async () => {
     const { dataDir, runtimeDir, config } = await fixture()
     await Effect.runPromise(

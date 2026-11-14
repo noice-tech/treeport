@@ -31,7 +31,6 @@ interface ProductEventPayloadMap {
   'terminal.updated': { worktreeId: string; terminalId: string }
   'terminal.removed': { worktreeId: string; terminalId: string }
   'terminal.metadata': TerminalRuntimeMetadata
-  'terminal.controller_changed': { terminalId: string; controlled: boolean }
   'app.created': { worktreeId: string; appId: string }
   'app.updated': { worktreeId: string; appId: string }
   'app.open_requested': {

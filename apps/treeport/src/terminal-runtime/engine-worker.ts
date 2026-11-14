@@ -31,11 +31,7 @@ await Effect.runPromise(
   Effect.scoped(
     Effect.gen(function* () {
       const sessions = yield* makeTerminalHostSessions(options)
-      yield* makeTerminalHostServer({
-        ...options,
-        sessions,
-        binaryOutput: true
-      })
+      yield* makeTerminalHostServer({ ...options, sessions })
       const stopped = yield* Effect.forkScoped(stop)
       port.postMessage('ready')
       yield* Fiber.join(stopped)

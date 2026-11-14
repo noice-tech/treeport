@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
   DirectoryBrowseResponse,
-  ProjectColor,
   ProjectRecord,
   RecentProjectRecord
 } from '#protocol/project'
@@ -180,36 +179,6 @@ export class ProjectService {
       }
 
       return match
-    })
-  }
-
-  updateProjectColor(
-    projectId: string,
-    color: ProjectColor | null
-  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
-    const invalidateProjectsSnapshot =
-      this.invalidateProjectsSnapshot.bind(this)
-
-    return Effect.gen(function* () {
-      const database = yield* DatabasePort
-      const events = yield* EventBusPort
-      const projectStore = yield* ProjectStore
-      yield* projectStore.requireOpenProject(projectId)
-
-      yield* database
-        .execute('project.service.215', (db) =>
-          db.run(sql`
-          UPDATE projects SET color = ${color}, updated_at = ${now()}
-          WHERE id = ${projectId}
-        `)
-        )
-        .pipe(Effect.orDie)
-      yield* invalidateProjectsSnapshot()
-      yield* Effect.sync(() => {
-        events.publish('project.updated', { projectId })
-      })
-
-      return yield* projectStore.getProject(projectId)
     })
   }
 
@@ -391,81 +360,6 @@ export class ProjectService {
     return Effect.flatMap(ProjectStore, (store) =>
       store.getOperation(operationId)
     )
-  }
-
-  resolveProject(
-    identifier: string
-  ): Effect.Effect<ProjectRecord, DomainError<unknown>, ApplicationServices> {
-    return Effect.gen(function* () {
-      const projectStore = yield* ProjectStore
-      const direct = yield* projectStore.storedProject(identifier)
-
-      if (direct) {
-        return yield* projectStore.requireOpenProject(direct.id)
-      }
-
-      const canonical = yield* canonicalPath(identifier)
-
-      const match = (yield* projectStore.storedProjects()).find(
-        (project) =>
-          isPathWithin(canonical, project.rootPath) ||
-          project.worktrees.some((worktree) =>
-            isPathWithin(canonical, worktree.path)
-          )
-      )
-
-      if (!match) {
-        return yield* Effect.fail(
-          new DomainError(
-            'PROJECT_NOT_FOUND',
-            `No registered project contains ${identifier}`,
-            404
-          )
-        )
-      }
-
-      yield* projectStore.requireOpenProject(match.id)
-
-      return match
-    })
-  }
-
-  resolveWorktree(
-    identifier: string
-  ): Effect.Effect<WorktreeRecord, DomainError<unknown>, ApplicationServices> {
-    return Effect.gen(function* () {
-      const projectStore = yield* ProjectStore
-      const direct = yield* projectStore.storedWorktree(identifier)
-
-      if (direct) {
-        yield* projectStore.requireOpenProject(direct.projectId)
-
-        return direct
-      }
-
-      const canonical = yield* canonicalPath(identifier)
-
-      const matches = (yield* projectStore.storedProjects())
-        .flatMap((project) => project.worktrees)
-        .filter((worktree) => isPathWithin(canonical, worktree.path))
-        .sort((a, b) => b.path.length - a.path.length)
-
-      const match = matches[0]
-
-      if (!match) {
-        return yield* Effect.fail(
-          new DomainError(
-            'WORKTREE_NOT_FOUND',
-            `No registered tree contains ${identifier}`,
-            404
-          )
-        )
-      }
-
-      yield* projectStore.requireOpenProject(match.projectId)
-
-      return match
-    })
   }
 
   browseDirectory(

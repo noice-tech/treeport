@@ -77,11 +77,8 @@ export type DesktopBridge = Readonly<
     openFileUrl: (url: string) => Promise<DesktopFileActionResult>
     getPathForFile: (file: File) => Promise<string | null>
     onLocalFilePaste: (listener: (paths: string[]) => void) => () => void
-    onFullscreenChange: (listener: (fullscreen: boolean) => void) => () => void
     onCommand: (listener: (command: DesktopCommand) => void) => () => void
     zoomPage: (action: 'zoom-in' | 'zoom-out' | 'zoom-reset') => void
-    setTerminalSelectionActive: (active: boolean) => void
-    onTerminalSelectionRelease: (listener: () => void) => () => void
     registerBrowser: (
       appId: string,
       webContentsId: number,

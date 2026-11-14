@@ -3,7 +3,10 @@ import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
 import { SpawnCommandRunner } from './command.ts'
-import { fixture } from './service.integration-fixture.ts'
+import {
+  createCompletedWorktree,
+  fixture
+} from './service.integration-fixture.ts'
 import { CommandPort } from './services/infrastructure/ports.ts'
 
 describe('tree cleanup completion', () => {
@@ -13,10 +16,10 @@ describe('tree cleanup completion', () => {
       const { main, service } = await fixture()
       const project = await service.registerProject(main)
 
-      const { worktree } = await service.createWorktree(
+      const worktree = await createCompletedWorktree(
+        service,
         project.id,
-        'cleanup-target',
-        'default'
+        'cleanup-target'
       )
 
       await fs.mkdir(path.join(worktree.path, '.treeport'))

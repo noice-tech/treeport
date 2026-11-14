@@ -70,7 +70,6 @@ export interface GhosttyTerminalCallbacks {
   progress: ((state: number, value: number) => void) | null
   programStatus: ((report: GhosttyProgramStatus) => void) | null
   reset: (() => void) | null
-  unknownOsc: ((content: string) => void) | null
   renderHold: ((held: boolean) => void) | null
   clipboardWrite: ((text: string) => void) | null
 }
@@ -609,47 +608,6 @@ export class GhosttyTerminal {
         option('RESET'),
         vt.callback(() => reset(), 2, false)
       )
-    }
-
-    if (callbacks.unknownOsc) {
-      const unknownOsc = callbacks.unknownOsc
-      const osc = vt.value('GhosttyTerminalUnknownSequenceTag', 'OSC')
-      const valueOffset = vt.offset('GhosttyTerminalUnknownSequence', 'value')
-
-      const truncated = vt.offset(
-        'GhosttyTerminalUnknownOscSequence',
-        'truncated'
-      )
-
-      const content = vt.offset('GhosttyTerminalUnknownOscSequence', 'content')
-      this.set(
-        option('UNKNOWN_SEQUENCE'),
-        vt.callback(
-          (_terminal, _user, sequence) => {
-            const view = vt.view()
-
-            if (view.getInt32(sequence, true) !== osc) {
-              return
-            }
-
-            const value = sequence + valueOffset
-
-            if (view.getUint8(value + truncated)) {
-              return
-            }
-
-            unknownOsc(
-              vt.string(
-                view.getUint32(value + content, true),
-                view.getUint32(value + content + 4, true)
-              )
-            )
-          },
-          3,
-          false
-        )
-      )
-      this.setSize(option('UNKNOWN_MAX_BYTES'), 4_096)
     }
 
     if (callbacks.clipboardWrite) {

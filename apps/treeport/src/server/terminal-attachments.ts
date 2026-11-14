@@ -33,7 +33,6 @@ import type { TreeportService } from './core/index.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import type { TerminalMetadataManager } from './terminal-metadata.ts'
 import type { TerminalAttachmentBackend } from './core/terminal.ts'
-import { networkTelemetry } from './network-telemetry.ts'
 import { currentTraceContext } from './tracing.ts'
 
 type ConnectionState = 'initializing' | 'ready' | 'closed'
@@ -62,7 +61,7 @@ interface ClientConnection {
   nextSequence: number
   lastAckSequence: number
   unacknowledgedBytes: number
-  outputBytes: Map<number, { bytes: number; sentAt: number }>
+  outputBytes: Map<number, number>
   outputBacklogged: boolean
   outputStallTimeout: NodeJS.Timeout | null
   announcedReady: boolean
@@ -128,17 +127,6 @@ export class TerminalAttachmentManager {
     transport: TerminalTransport,
     protocolVersion: TerminalProtocolVersion = TERMINAL_PROTOCOL_VERSION
   ): Effect.Effect<string, never, ApplicationServices | Scope.Scope> {
-    if (
-      [...this.clients.values()].some(
-        (connection) =>
-          connection.terminalId === auth.terminalId &&
-          connection.clientId === auth.clientId &&
-          connection.state !== 'closed'
-      )
-    ) {
-      networkTelemetry.reconnectNow('terminals')
-    }
-
     const connection: ClientConnection = {
       id: transport.id,
       terminalId: auth.terminalId,
@@ -423,9 +411,6 @@ export class TerminalAttachmentManager {
     connection.pendingDirectOutput = []
     connection.history = null
     connection.pendingDirectOutputBytes = 0
-    networkTelemetry.watermarkBytesNow('terminals', 'unacknowledged_output', 0)
-    networkTelemetry.watermarkBytesNow('terminals', 'pending_output', 0)
-    networkTelemetry.watermarkBytesNow('terminals', 'queued_input', 0)
 
     const restoreHostAuthority =
       connection.queryAuthorityActive || connection.queryTransitionId !== null
@@ -473,7 +458,6 @@ export class TerminalAttachmentManager {
       }
 
       this.broadcastControl(connection.terminalId)
-      this.publishControllerChanged(connection.terminalId, null)
     }
   }
 
@@ -612,11 +596,6 @@ export class TerminalAttachmentManager {
           Effect.sync(() => {
             if (connection.state === 'initializing') {
               connection.pendingDirectOutputBytes += Buffer.byteLength(data)
-              networkTelemetry.watermarkBytesNow(
-                'terminals',
-                'pending_output',
-                connection.pendingDirectOutputBytes
-              )
 
               if (
                 connection.pendingDirectOutputBytes >=
@@ -715,13 +694,6 @@ export class TerminalAttachmentManager {
         })
       }
 
-      if (self.isController(connection)) {
-        self.publishControllerChanged(
-          connection.terminalId,
-          connection.clientId
-        )
-      }
-
       self.sendRuntimeMetadata(
         connection,
         self.metadata.get(connection.terminalId)
@@ -734,7 +706,6 @@ export class TerminalAttachmentManager {
       }
 
       connection.pendingDirectOutputBytes = 0
-      networkTelemetry.watermarkBytesNow('terminals', 'pending_output', 0)
       self.broadcastControl(connection.terminalId)
     }).pipe(
       Effect.withSpan('treeport.terminal.attach', {
@@ -769,13 +740,8 @@ export class TerminalAttachmentManager {
 
     const sequence = connection.nextSequence++
     const bytes = Buffer.byteLength(data)
-    connection.outputBytes.set(sequence, { bytes, sentAt: Date.now() })
+    connection.outputBytes.set(sequence, bytes)
     connection.unacknowledgedBytes += bytes
-    networkTelemetry.watermarkBytesNow(
-      'terminals',
-      'unacknowledged_output',
-      connection.unacknowledgedBytes
-    )
 
     if (
       !this.send(connection, 'output', {
@@ -831,28 +797,18 @@ export class TerminalAttachmentManager {
       current <= sequence;
       current += 1
     ) {
-      const output = connection.outputBytes.get(current)
+      const bytes = connection.outputBytes.get(current)
 
-      if (output !== undefined) {
+      if (bytes !== undefined) {
         connection.unacknowledgedBytes = Math.max(
           0,
-          connection.unacknowledgedBytes - output.bytes
+          connection.unacknowledgedBytes - bytes
         )
         connection.outputBytes.delete(current)
-        networkTelemetry.durationNow(
-          'terminals',
-          'ack_lag',
-          Date.now() - output.sentAt
-        )
       }
     }
 
     connection.lastAckSequence = sequence
-    networkTelemetry.watermarkBytesNow(
-      'terminals',
-      'unacknowledged_output',
-      connection.unacknowledgedBytes
-    )
 
     if (
       connection.outputBacklogged &&
@@ -931,11 +887,6 @@ export class TerminalAttachmentManager {
 
     connection.queuedInputBytes += bytes
     connection.queuedInputMessages += 1
-    networkTelemetry.watermarkBytesNow(
-      'terminals',
-      'queued_input',
-      connection.queuedInputBytes
-    )
     this.enqueueTerminal(
       connection.terminalId,
       () =>
@@ -947,11 +898,6 @@ export class TerminalAttachmentManager {
           connection.queuedInputMessages = Math.max(
             0,
             connection.queuedInputMessages - 1
-          )
-          networkTelemetry.watermarkBytesNow(
-            'terminals',
-            'queued_input',
-            connection.queuedInputBytes
           )
 
           if (
@@ -1358,10 +1304,6 @@ export class TerminalAttachmentManager {
           }
 
           this.broadcastControl(connection.terminalId)
-          this.publishControllerChanged(
-            connection.terminalId,
-            connection.clientId
-          )
         }),
       (error) => this.failDimensionChange(connection.terminalId, error)
     )
@@ -1396,10 +1338,6 @@ export class TerminalAttachmentManager {
           }
 
           this.broadcastControl(terminalId)
-          this.publishControllerChanged(
-            terminalId,
-            replacement?.clientId ?? null
-          )
         }),
       (error) => this.failDimensionChange(terminalId, error)
     )
@@ -1449,16 +1387,6 @@ export class TerminalAttachmentManager {
       connection.state === 'ready' &&
       connection.transport.isConnected()
     )
-  }
-
-  private publishControllerChanged(
-    terminalId: string,
-    controllerId: string | null
-  ): void {
-    this.service.events.publish('terminal.controller_changed', {
-      terminalId,
-      controlled: controllerId !== null
-    })
   }
 
   private protocolError(

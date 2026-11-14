@@ -1,10 +1,6 @@
 import { appIconDataUrl } from '@treeport/theme/app-icon'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import {
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useState
-} from 'react'
+import { useEffect, useState } from 'react'
 import { ComputerSelector } from './computer-selector'
 import { ConnectDialog } from './connect-dialog'
 import { ConnectionPage } from './connection-page'
@@ -89,15 +85,6 @@ export function App() {
   )
 
   const [updatesPausedOpen, setUpdatesPausedOpen] = useState(false)
-  const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
-
-  useEffect(
-    () =>
-      window.treeportShell.onTerminalSelectionActive(
-        setTerminalSelectionActive
-      ),
-    []
-  )
 
   const openDialog = (nextDialog: 'connect' | 'manage' | 'phone') => {
     setSelectorOpen(false)
@@ -160,31 +147,9 @@ export function App() {
     )
   }, [dialog, selectorOpen, updateOpen, updatesPausedOpen])
 
-  const captureTerminalSelectionPointer = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    if (
-      event.buttons & 1 &&
-      !event.currentTarget.hasPointerCapture(event.pointerId)
-    ) {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    }
-  }
-
   return (
     <>
       <Titlebar />
-      {terminalSelectionActive && showTitlebar ? (
-        <div
-          className="fixed inset-x-0 top-0 z-90 h-8 [-webkit-app-region:no-drag]"
-          onPointerEnter={captureTerminalSelectionPointer}
-          onPointerMove={captureTerminalSelectionPointer}
-          onPointerUp={() => window.treeportShell.releaseTerminalSelection()}
-          onPointerCancel={() =>
-            window.treeportShell.releaseTerminalSelection()
-          }
-        />
-      ) : null}
       <div
         className={
           showTitlebar

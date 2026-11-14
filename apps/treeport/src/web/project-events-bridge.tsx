@@ -197,9 +197,7 @@ export function useProjectEventsBridge(
         return
       }
 
-      if (event.type !== 'terminal.controller_changed') {
-        refresh()
-      }
+      refresh()
     }
 
     const connect = Effect.scoped(

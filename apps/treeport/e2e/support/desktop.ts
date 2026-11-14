@@ -31,8 +31,6 @@ export async function installDesktopBridge(
       | `select-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
 
     const listeners = new Set<(command: DesktopCommand) => void>()
-    const terminalSelectionReleaseListeners = new Set<() => void>()
-    let fullscreenListener: ((fullscreen: boolean) => void) | null = null
     scope.__attentionRequests = 0
     scope.__openedDesktopFileUrls = []
     Object.defineProperty(scope, 'treeportDesktop', {
@@ -49,25 +47,10 @@ export async function installDesktopBridge(
         getPathForFile(file: File) {
           return Promise.resolve(filePaths[file.name] ?? null)
         },
-        onFullscreenChange(next: (fullscreen: boolean) => void) {
-          fullscreenListener = next
-
-          return () => {
-            if (fullscreenListener === next) {
-              fullscreenListener = null
-            }
-          }
-        },
         onCommand(next: (command: DesktopCommand) => void) {
           listeners.add(next)
 
           return () => listeners.delete(next)
-        },
-        setTerminalSelectionActive() {},
-        onTerminalSelectionRelease(next: () => void) {
-          terminalSelectionReleaseListeners.add(next)
-
-          return () => terminalSelectionReleaseListeners.delete(next)
         },
         requestAttention() {
           scope.__attentionRequests += 1
@@ -76,9 +59,5 @@ export async function installDesktopBridge(
     })
     scope.__dispatchDesktopCommand = (command: DesktopCommand) =>
       listeners.forEach((listener) => listener(command))
-    scope.__dispatchTerminalSelectionRelease = () =>
-      terminalSelectionReleaseListeners.forEach((listener) => listener())
-    scope.__dispatchDesktopFullscreen = (fullscreen: boolean) =>
-      fullscreenListener?.(fullscreen)
   }, filePaths)
 }

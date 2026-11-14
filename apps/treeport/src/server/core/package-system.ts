@@ -63,7 +63,6 @@ export interface ResolvedWebApp {
   root: string
   entry: string
   packageRoot: string
-  development: boolean
   relativePath: string
   enabled: boolean
 }
@@ -1140,7 +1139,6 @@ export class PackageSystem {
           root: candidate.root,
           entry: 'index.html',
           packageRoot: root,
-          development: true,
           relativePath: candidate.relativePath,
           enabled: true
         }

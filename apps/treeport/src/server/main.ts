@@ -32,7 +32,6 @@ import { createBrowserDevtoolsBridge } from './browser-devtools.ts'
 import { makeRpcHttpApp } from './rpc-server.ts'
 import { acquireTerminalMetadataManager } from './terminal-metadata.ts'
 import { connectOrStartTerminalHost } from './terminal-host-client.ts'
-import { observeDaemonEventLoop } from './network-telemetry.ts'
 import { WebPushManager } from './web-push.ts'
 import { ComputerDirectory } from './computers.ts'
 import { AppServices } from './app-services.ts'
@@ -62,14 +61,6 @@ export async function main(
     ? 'treeport-server-dev'
     : 'treeport-server'
   const resourceScope = await Effect.runPromise(Scope.make())
-  await Effect.runPromise(
-    Scope.extend(
-      Effect.acquireRelease(Effect.sync(observeDaemonEventLoop), (stop) =>
-        Effect.sync(stop)
-      ),
-      resourceScope
-    )
-  )
 
   try {
     const ownership = await Effect.runPromise(

@@ -185,7 +185,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
     Layer.succeed(WorktreeReconciliation, resources.worktreeReconciler),
     Layer.succeed(WorktreeOperations, resources.worktreeService),
     NetworkListenersLayer(resources.runner),
-    WebAppRuntimeLayer(resources.config)
+    WebAppRuntimeLayer()
   )
 
   const projectStore = ProjectStoreLive.pipe(Layer.provide(adapters))
@@ -209,10 +209,7 @@ export function makeApplicationRuntime(resources: ApplicationResources) {
       ApplicationDaemons.Default,
       ApplicationFibers.Default,
       TerminalState.Default,
-      tracingLayerFromEnvironment(
-        'treeport',
-        resources.config.appVersion ?? 'unknown'
-      )
+      tracingLayerFromEnvironment('treeport', resources.config.appVersion)
     )
   )
 }

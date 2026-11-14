@@ -166,22 +166,6 @@ const desktopBridge = Object.freeze({
 
     return () => localFilePasteListeners.delete(listener)
   },
-  onFullscreenChange(listener: (fullscreen: boolean) => void) {
-    const receive: Parameters<typeof ipcRenderer.on>[1] = (
-      _event: IpcRendererEvent,
-      value
-    ) => {
-      const parsed = z.boolean().safeParse(value)
-
-      if (parsed.success) {
-        listener(parsed.data)
-      }
-    }
-
-    ipcRenderer.on('fullscreen-change', receive)
-
-    return () => ipcRenderer.removeListener('fullscreen-change', receive)
-  },
   onCommand(listener: (command: DesktopCommand) => void) {
     const receive: Parameters<typeof ipcRenderer.on>[1] = (
       _event: IpcRendererEvent,
@@ -230,16 +214,6 @@ const desktopBridge = Object.freeze({
   },
   zoomPage(action: 'zoom-in' | 'zoom-out' | 'zoom-reset') {
     ipcRenderer.send('desktop:zoom-page', action)
-  },
-  setTerminalSelectionActive(active: boolean) {
-    ipcRenderer.send('terminal-selection:set-active', active)
-  },
-  onTerminalSelectionRelease(listener: () => void) {
-    const receive = () => listener()
-    ipcRenderer.on('terminal-selection:release', receive)
-
-    return () =>
-      ipcRenderer.removeListener('terminal-selection:release', receive)
   },
   registerBrowser(
     appId: string,
@@ -400,24 +374,12 @@ const shellBridge = Object.freeze({
 
     return () => ipcRenderer.removeListener('shell:state', receive)
   },
-  onTerminalSelectionActive(listener: (active: boolean) => void) {
-    const receive = (_event: IpcRendererEvent, active: boolean) =>
-      listener(active)
-
-    ipcRenderer.on('terminal-selection:active', receive)
-
-    return () =>
-      ipcRenderer.removeListener('terminal-selection:active', receive)
-  },
   onAttentionSound(listener: () => void) {
     const receive = () => listener()
 
     ipcRenderer.on('shell:attention-sound', receive)
 
     return () => ipcRenderer.removeListener('shell:attention-sound', receive)
-  },
-  releaseTerminalSelection(): void {
-    ipcRenderer.send('shell:terminal-selection-release')
   },
   copyPhoneLink(url: string): Promise<boolean> {
     return ipcRenderer

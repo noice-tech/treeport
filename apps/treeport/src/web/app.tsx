@@ -2072,11 +2072,7 @@ function WorkspaceApp() {
       </WorkspaceSidebar>
       <WorkspaceMain
         presence={
-          <WorkspaceViewers
-            worktree={selectedWorktree}
-            focusedAppId={presenceFocusedAppId}
-            presence={presence}
-          />
+          <WorkspaceViewers worktree={selectedWorktree} presence={presence} />
         }
       >
         <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)]">

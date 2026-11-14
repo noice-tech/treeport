@@ -18,7 +18,6 @@ import type { ProductEvent } from '#protocol/events'
 import type { PlaywrightBrowserCallbacks } from './playwright-browser.ts'
 import {
   BrowserSessionManager,
-  type BrowserAgentCliRunner,
   type BrowserLocalAutomationConnector,
   type BrowserSessionBrowser,
   type BrowserSessionBrowserFactory,
@@ -234,7 +233,6 @@ const browserFactory: BrowserSessionBrowserFactory = (
   new FakeBrowser('/cache', workspacePath, title, appId, worktreeId, callbacks)
 
 function fixture(
-  agentCliRunner: BrowserAgentCliRunner | null = null,
   options: {
     appUrl?: string
     appTitle?: string
@@ -305,7 +303,6 @@ function fixture(
     service,
     config,
     browserFactory,
-    agentCliRunner,
     options.connectLocalAutomation
   )
 
@@ -887,30 +884,17 @@ describe('Browser sessions', () => {
     const launchUrl = 'http://localhost:4173/from-launch'
     const agentUrl = 'http://localhost:4173/from-agent'
 
-    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) => {
-      const browser = browsers[0]!
-
-      if (args[0] === 'attach') {
-        expect(browser.state.url).toBe(launchUrl)
-
-        return 'attached'
-      }
-
-      if (args[1] === 'goto') {
-        browser.state = {
-          ...browser.state,
-          url: agentUrl,
-          title: 'Agent page'
-        }
-        browser.callbacks.state(browser.state)
+    const agentCommand = vi
+      .spyOn(FakeBrowser.prototype, 'agentCommand')
+      .mockImplementationOnce(async function (this: FakeBrowser) {
+        expect(this.state.url).toBe(launchUrl)
+        this.state = { ...this.state, url: agentUrl, title: 'Agent page' }
+        this.callbacks.state(this.state)
 
         return 'navigated'
-      }
+      })
 
-      return 'detached'
-    })
-
-    const launchValue = fixture(runAgentCli, { appUrl: launchUrl })
+    const launchValue = fixture({ appUrl: launchUrl })
 
     await expect(
       runEffect(
@@ -932,9 +916,10 @@ describe('Browser sessions', () => {
       }
     )
     await launchValue.manager.dispose()
+    agentCommand.mockRestore()
 
     const storedUrl = 'http://localhost:4173/from-storage'
-    const storedValue = fixture(null, { appUrl: storedUrl })
+    const storedValue = fixture({ appUrl: storedUrl })
     const client = storedValue.transport('stored-client')
     await runEffect(
       storedValue.manager.accept(
@@ -958,17 +943,13 @@ describe('Browser sessions', () => {
   })
 
   it('streams and controls a verified local owner without a second browser runtime', async () => {
-    const runAgentCli = vi.fn<BrowserAgentCliRunner>(async (_target, args) =>
-      args[0] === 'attach' ? 'attached' : 'snapshot output'
-    )
-
     const localBrowser = fakeLocalBrowser()
 
     // SAFETY: This faithful fake supplies every Playwright Browser method used by BrowserSessionManager.
     const connectLocalAutomation: BrowserLocalAutomationConnector = async () =>
       localBrowser.browser as never
 
-    const value = fixture(runAgentCli, { connectLocalAutomation })
+    const value = fixture({ connectLocalAutomation })
     const remote = value.transport('remote')
     await runEffect(
       value.manager.accept(
@@ -1387,7 +1368,6 @@ describe('Browser sessions', () => {
       })
     )
     expect(browsers).toHaveLength(1)
-    expect(runAgentCli).not.toHaveBeenCalled()
 
     acceptRuntimeControl = false
     value.manager.message('observer', { type: 'takeControl' })
@@ -1494,7 +1474,6 @@ describe('Browser sessions', () => {
       )
     ).resolves.toBe('- button "Local target" [ref=e1]')
     expect(browsers).toHaveLength(1)
-    expect(runAgentCli).not.toHaveBeenCalled()
 
     value.manager.ownerMessage('local-owner-resumed', {
       type: 'released',
@@ -2099,14 +2078,12 @@ describe('Browser sessions', () => {
   })
 
   it('keeps human control during agent commands', async () => {
-    const runAgentCli = vi
-      .fn<BrowserAgentCliRunner>()
-      .mockResolvedValue('snapshot')
-      .mockResolvedValueOnce('attached')
+    const agentCommand = vi
+      .spyOn(FakeBrowser.prototype, 'agentCommand')
       .mockResolvedValueOnce('snapshot')
       .mockRejectedValueOnce(new Error('Browser disconnected'))
 
-    const value = fixture(runAgentCli)
+    const value = fixture()
     const client = value.transport('client')
     await runEffect(
       value.manager.accept(
@@ -2135,6 +2112,7 @@ describe('Browser sessions', () => {
       state: { controller: 'you', controlled: true }
     })
     await value.manager.dispose()
+    agentCommand.mockRestore()
   })
 
   it('routes browser popups through durable BrowserApp creation', async () => {

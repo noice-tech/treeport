@@ -18,8 +18,6 @@ declare global {
   interface Window {
     __attentionRequests: number
     __dispatchDesktopCommand(command: TreeportTestDesktopCommand): void
-    __dispatchDesktopFullscreen(fullscreen: boolean): void
-    __dispatchTerminalSelectionRelease(): void
     __eventSource: {
       emit(name: NetworkProductEvent['type'], source: string): void
     }

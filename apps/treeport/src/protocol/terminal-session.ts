@@ -111,12 +111,6 @@ function decodeOrNull<S extends Schema.Schema<any, any, never>>(
   return Either.isRight(parsed) ? parsed.right : null
 }
 
-export function parseTerminalRuntimeMetadata(
-  value: TerminalProtocolInput
-): TerminalRuntimeMetadata | null {
-  return decodeOrNull(terminalRuntimeMetadataSchema, value)
-}
-
 export function terminalAttentionNotification(input: {
   terminalTitle: string
   projectName: string

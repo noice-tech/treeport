@@ -76,8 +76,7 @@ const terminalHostRecordFields = {
   hostKey: nonEmptyString,
   pid: positiveInteger,
   socketPath: nonEmptyString,
-  startedAt: nonEmptyString,
-  launcherPath: Schema.optional(nonEmptyString)
+  startedAt: nonEmptyString
 }
 
 const terminalHostRecordSchema = Schema.Struct(terminalHostRecordFields)
@@ -209,10 +208,6 @@ const terminalHostInputSchemas = {
   }),
   processes: worktreeIdSchema,
   titleState: terminalIdSchema,
-  signal: Schema.Struct({
-    terminalId: nonEmptyString,
-    signal: Schema.Literal('SIGINT', 'SIGTERM', 'SIGKILL', 'SIGHUP')
-  }),
   kill: terminalIdSchema,
   killWorktree: worktreeIdSchema,
   shutdown: Schema.Struct({ ifEmpty: Schema.Literal(true) })
@@ -239,7 +234,6 @@ const TERMINAL_HOST_REQUEST_METHODS = [
   'move',
   'processes',
   'titleState',
-  'signal',
   'kill',
   'killWorktree',
   'shutdown'
@@ -330,7 +324,6 @@ export interface TerminalHostResults {
   move: null
   processes: Array<{ pid: number; terminalId: string }>
   titleState: TerminalTitleState | null
-  signal: null
   kill: null
   killWorktree: string[]
   shutdown: null
@@ -450,7 +443,6 @@ const terminalHostResultSchemas = {
     Schema.Struct({ pid: positiveInteger, terminalId: Schema.String })
   ),
   titleState: Schema.NullOr(terminalTitleStateSchema),
-  signal: nullResultSchema,
   kill: nullResultSchema,
   killWorktree: Schema.Array(Schema.String),
   shutdown: nullResultSchema
@@ -610,19 +602,14 @@ export function decodeTerminalHostRecord(
 }
 
 export function encodeTerminalHostFrame(
-  frame: TerminalHostFrame,
-  binaryOutput = false
+  frame: TerminalHostFrame
 ): Effect.Effect<Buffer, TerminalHostFrameEncodeError> {
   return Effect.try({
     try: () => {
       const validated = decodeFrame(frame)
       let payload: Buffer
 
-      if (
-        binaryOutput &&
-        validated.type === 'event' &&
-        validated.event === 'output'
-      ) {
+      if (validated.type === 'event' && validated.event === 'output') {
         const id = Buffer.from(validated.data.terminalId, 'utf8')
         const data = Buffer.from(validated.data.output, 'utf8')
         payload = Buffer.allocUnsafe(13 + id.length + data.length)

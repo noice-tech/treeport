@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import type { WebAppStorage } from '@treeport/app-sdk'
 import {
@@ -14,7 +15,6 @@ import os from 'node:os'
 import path from 'node:path'
 import * as Effect from 'effect/Effect'
 import { describe, expect, it, vi } from 'vitest'
-import { DESKTOP_PROTOCOL_VERSION } from '#protocol/api'
 import type { JsonValue } from '@treeport/app-sdk'
 import type { TerminalRuntimeMetadata } from '#protocol/terminal-session'
 import {
@@ -30,6 +30,7 @@ import type { WebAppAssetResolution } from './core/web-app-vite-runtime.ts'
 import type { TerminalMetadataManager } from './terminal-metadata.ts'
 import type { BrowserSessionManager } from './browser-sessions.ts'
 import type { ComputerDirectory } from './computers.ts'
+import type { AppServices } from './app-services.ts'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
@@ -43,6 +44,9 @@ function fixture(webDist = '/missing') {
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1:8733',
     remoteUrl: null,
+    appVersion: 'test',
+    instanceId: 'test-instance',
+    installationMethod: 'test',
     webDevelopment: false
   }
 
@@ -55,7 +59,6 @@ function fixture(webDist = '/missing') {
     mainWorktreePath: '/repo',
     defaultBranch: '',
     originUrl: null,
-    color: null,
     isHome: false,
     availability: { state: 'available' as const, message: null },
     worktrees: [],
@@ -182,10 +185,6 @@ function fixture(webDist = '/missing') {
     closeProject: vi.fn(async () => undefined),
     dismissRecentProject: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
-    updateProjectColor: vi.fn((id: string, color: string | null) => ({
-      id,
-      color
-    })),
     listLaunchers: vi.fn(() => [
       {
         id: 'launcher_existing',
@@ -274,7 +273,6 @@ function fixture(webDist = '/missing') {
       ...projectRecord,
       id
     })),
-    resolveProject: vi.fn(async () => ({ id: 'p' })),
     refreshTerminalStatus: vi.fn(async (id: string) => ({
       ...terminalRecord,
       id
@@ -347,18 +345,6 @@ function fixture(webDist = '/missing') {
         updatedAt: '2026-01-02'
       })
     ),
-    createWebApp: vi.fn(async (worktreeId: string) => ({
-      id: 'app_review',
-      kind: 'web',
-      worktreeId,
-      definitionId: 'project:review',
-      title: 'Review',
-      launch: { input: null, cwd: null },
-      permissions: [],
-      sandbox: { enabled: true, allowSameOrigin: false },
-      createdAt: '2026-01-01',
-      updatedAt: '2026-01-01'
-    })),
     openWebApp: vi.fn(async (worktreeId: string) => ({
       app: {
         id: 'app_review',
@@ -470,7 +456,7 @@ function fixture(webDist = '/missing') {
         untracked: []
       }
     })),
-    getAppListeners: vi.fn(async () => ({
+    getWebAppListeners: vi.fn(async () => ({
       supported: true,
       message: null,
       listeners: [
@@ -494,10 +480,8 @@ function fixture(webDist = '/missing') {
     resolveWebAppAsset: vi.fn<
       (appId: string, requestedPath: string) => Promise<WebAppAssetResolution>
     >(async () => ({
-      kind: 'asset',
-      path: '/missing',
-      immutable: true,
-      development: false,
+      kind: 'redirect',
+      location: '/api/web-app-dev/0123456789abcdef01234567/index.html',
       allowNetworkRequests: false
     })),
     createTerminal: vi.fn(async () => terminalRecord),
@@ -519,8 +503,7 @@ function fixture(webDist = '/missing') {
       status: 'running' as const
     })),
     removePreview: vi.fn(async () => removePreviewRecord),
-    beginRemove: vi.fn(async () => removeOperationRecord),
-    terminateAllTerminals: vi.fn(async () => 2)
+    beginRemove: vi.fn(async () => removeOperationRecord)
   }
 
   // SAFETY: The fixture exposes the same doubles through the temporary façade
@@ -603,8 +586,10 @@ function fixture(webDist = '/missing') {
     terminalHost,
     terminalMetadata,
     browserSessions,
+    appServices: testAccess<AppServices>({ access: () => null }),
     presence,
     computers: testAccess<ComputerDirectory>({}),
+    rpcHttpApp: Effect.succeed(HttpServerResponse.empty({ status: 404 })),
     webDist
   })
 
@@ -845,7 +830,6 @@ describe('HTTP API validation', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({
       ok: true,
-      protocolVersion: DESKTOP_PROTOCOL_VERSION,
       hostname: os.hostname()
     })
   })
@@ -1008,26 +992,6 @@ describe('HTTP API validation', () => {
     expect(await definitions.json()).toMatchObject({
       definitions: [{ id: 'project:review', source: { type: 'project' } }]
     })
-
-    const created = await app.request('/api/worktrees/wt_1/apps', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        definitionId: 'project:review',
-        input: { path: 'output/demo.mp4' },
-        launchCwd: 'packages/preview'
-      })
-    })
-
-    expect(created.status).toBe(201)
-    expect(service.createWebApp).toHaveBeenCalledWith(
-      'wt_1',
-      'project:review',
-      {
-        input: { path: 'output/demo.mp4' },
-        cwd: 'packages/preview'
-      }
-    )
 
     const opened = await app.request('/api/worktrees/wt_1/apps/open', {
       method: 'POST',
@@ -1226,7 +1190,7 @@ describe('HTTP API validation', () => {
         ]
       }
     })
-    expect(service.getAppListeners).toHaveBeenCalledWith('app_review')
+    expect(service.getWebAppListeners).toHaveBeenCalledWith('app_review')
 
     expect(
       await (await app.request('/api/apps/app_review/storage')).json()
@@ -1531,117 +1495,6 @@ describe('HTTP API validation', () => {
       expect(stopPropagation).toHaveBeenCalledOnce()
     } finally {
       vi.unstubAllGlobals()
-    }
-  })
-
-  it('serves immutable Vite output with restrictive browser headers', async () => {
-    const { app, config, service } = fixture()
-    const appRoot = path.join(config.runtimeDir, 'typed-app')
-    const indexPath = path.join(appRoot, 'index.html')
-    const modulePath = path.join(appRoot, 'app.js')
-
-    const indexSource =
-      '<!doctype html><html><body><script type="module" src="app.js"></script></body></html>'
-
-    await fs.mkdir(appRoot, { recursive: true })
-    await fs.writeFile(indexPath, indexSource)
-    await fs.writeFile(modulePath, 'export const answer = 42')
-    vi.mocked(service.resolveWebAppAsset).mockImplementation(
-      async (_appId, requestedPath) => ({
-        kind: 'asset',
-        path: requestedPath ? path.join(appRoot, requestedPath) : indexPath,
-        immutable: true,
-        development: false,
-        allowNetworkRequests: false
-      })
-    )
-
-    try {
-      const browserOrigin = 'https://treeport.example.ts.net:5173'
-
-      const documentResponse = await app.request(
-        '/api/web-apps/app_review/assets/',
-        {
-          headers: {
-            referer: `${browserOrigin}/projects/project_1/apps/app_review`,
-            'x-forwarded-host': 'treeport.example.ts.net:5173',
-            'x-forwarded-proto': 'https'
-          }
-        }
-      )
-
-      expect(documentResponse.status).toBe(200)
-      await expect(documentResponse.text()).resolves.toBe(indexSource)
-      expect(
-        documentResponse.headers
-          .get('content-security-policy')
-          ?.split(';')
-          .map((directive) => directive.trim())
-      ).toEqual(
-        expect.arrayContaining([
-          `default-src 'self' ${browserOrigin}`,
-          `script-src 'self' ${browserOrigin}`,
-          `style-src 'self' ${browserOrigin} 'unsafe-inline'`,
-          `img-src 'self' ${browserOrigin} data:`,
-          "connect-src 'none'",
-          'frame-src http: https:',
-          `frame-ancestors 'self' ${browserOrigin}`
-        ])
-      )
-
-      const moduleResponse = await app.request(
-        '/api/web-apps/app_review/assets/app.js'
-      )
-
-      expect(moduleResponse.status).toBe(200)
-      expect(moduleResponse.headers.get('content-type')).toBe(
-        'text/javascript; charset=utf-8'
-      )
-      const moduleSource = await moduleResponse.text()
-
-      // SAFETY: The served module is compiled from a source that exports answer.
-      const compiled = (await import(
-        /* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`
-      )) as { answer: number }
-
-      expect(compiled.answer).toBe(42)
-    } finally {
-      await fs.rm(config.runtimeDir, { recursive: true, force: true })
-    }
-  })
-
-  it('serves nested app modules with their browser MIME type', async () => {
-    const { app, config, service } = fixture()
-    const modulePath = path.join(config.runtimeDir, 'nested', 'review.js')
-    await fs.mkdir(path.dirname(modulePath), { recursive: true })
-    await fs.writeFile(modulePath, 'export const loaded = true')
-    vi.mocked(service.resolveWebAppAsset).mockResolvedValue({
-      kind: 'asset',
-      path: modulePath,
-      immutable: true,
-      development: false,
-      allowNetworkRequests: true
-    })
-
-    try {
-      const response = await app.request(
-        '/api/web-apps/app_review/assets/nested/review.js'
-      )
-
-      expect(response.status).toBe(200)
-      expect(response.headers.get('content-type')).toBe(
-        'text/javascript; charset=utf-8'
-      )
-      expect(response.headers.get('content-security-policy')).toContain(
-        'connect-src http: https:'
-      )
-      expect(await response.text()).toBe('export const loaded = true')
-      expect(service.resolveWebAppAsset).toHaveBeenCalledWith(
-        'app_review',
-        'nested/review.js'
-      )
-    } finally {
-      await fs.rm(config.runtimeDir, { recursive: true, force: true })
     }
   })
 
@@ -2137,19 +1990,6 @@ describe('HTTP API validation', () => {
       }
     })
     expect(captureTerminal).toHaveBeenLastCalledWith('term', 200)
-  })
-
-  it('shuts down an empty detached host after terminating all terminals', async () => {
-    const { app, service, terminalHost } = fixture()
-
-    const response = await app.request('/api/admin/terminate-terminals', {
-      method: 'POST'
-    })
-
-    expect(response.status).toBe(200)
-    expect(service.terminateAllTerminals).toHaveBeenCalledOnce()
-    expect(terminalHost.shutdownIfEmpty).toHaveBeenCalledOnce()
-    expect(await response.json()).toEqual({ terminated: 2 })
   })
 
   it('serves the web entry point for deep links without masking API 404s', async () => {

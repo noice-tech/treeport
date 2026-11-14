@@ -7,7 +7,6 @@ import {
   text,
   uniqueIndex
 } from 'drizzle-orm/sqlite-core'
-import { PROJECT_COLORS } from '#protocol/project'
 
 export const projects = sqliteTable(
   'projects',
@@ -21,7 +20,6 @@ export const projects = sqliteTable(
     mainWorktreePath: text('main_worktree_path').notNull(),
     defaultBranch: text('default_branch').notNull(),
     originUrl: text('origin_url'),
-    color: text({ enum: PROJECT_COLORS }),
     repositoryIdentity: text('repository_identity'),
     repositoryDevice: text('repository_device').notNull(),
     repositoryInode: text('repository_inode').notNull(),
@@ -35,10 +33,6 @@ export const projects = sqliteTable(
   },
   (table) => [
     check('projects_kind_check', sql`${table.kind} IN ('repository','folder')`),
-    check(
-      'projects_color_check',
-      sql`${table.color} IS NULL OR ${table.color} IN ('rose','orange','amber','emerald','cyan','blue','violet','pink')`
-    ),
     check('projects_name_is_custom_check', sql`${table.nameIsCustom} IN (0,1)`),
     check('projects_is_open_check', sql`${table.isOpen} IN (0,1)`),
     check('projects_is_home_check', sql`${table.isHome} IN (0,1)`),

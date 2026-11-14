@@ -113,7 +113,7 @@ describe('agent trace export', () => {
                 'treeport.test.promise',
                 () => Promise.reject(originalError),
                 {
-                  'treeport.web_app.build_pending': false,
+                  'treeport.web_app.reused': false,
                   'unsafe.secret': 'do-not-export'
                 }
               )
@@ -156,7 +156,7 @@ describe('agent trace export', () => {
     ).toMatchObject({
       traceId: parent.traceId,
       parentSpanId: parent.spanId,
-      attributes: { 'treeport.web_app.build_pending': false }
+      attributes: { 'treeport.web_app.reused': false }
     })
     expect(parent).toMatchObject({
       type: 'treeport.trace.span',

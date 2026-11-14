@@ -126,15 +126,7 @@ export class HostSession {
       }
 
       this.transition('ready')
-      this.connection = {
-        status: 'ready',
-        computerId: computer.id,
-        serverVersion:
-          this.connection.status === 'ready'
-            ? this.connection.serverVersion
-            : null,
-        url: renderer.getURL()
-      }
+      this.connection = { status: 'ready', computerId: computer.id }
       options.changed()
       options.ready()
     })
@@ -265,17 +257,6 @@ export class HostSession {
           yield* this.options
             .rememberHostname(health.hostname)
             .pipe(Effect.catchAll(() => Effect.void))
-        }
-
-        if (
-          generation === this.generation &&
-          this.connection.status === 'ready'
-        ) {
-          this.connection = {
-            ...this.connection,
-            serverVersion: health.version
-          }
-          this.options.changed()
         }
       }).pipe(
         Effect.ensuring(

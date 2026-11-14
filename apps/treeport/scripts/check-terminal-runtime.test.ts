@@ -11,22 +11,6 @@ describe('session lifecycle ownership boundary', () => {
     `
       )
     ).toEqual([expect.stringContaining('withSessionRecovery')])
-    expect(
-      sessionOwnershipViolations(
-        'scripts/cleanup-development-runtime.mjs',
-        `
-      if (status !== null && processExists(status.pid)) { throw error }
-    `
-      )
-    ).toEqual([expect.stringContaining('closeSession')])
-    expect(
-      sessionOwnershipViolations(
-        'src/terminal-runtime/preflight.ts',
-        `
-      if (!processExists(status.ownerPid)) { continue }
-    `
-      )
-    ).toEqual([expect.stringContaining('PersistentSession.inspect')])
   })
 
   it('rejects the timestamp workaround and direct deletion but permits the lifecycle API', () => {

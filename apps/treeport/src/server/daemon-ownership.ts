@@ -30,12 +30,6 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
   publish(): Promise<void>
   release(): Promise<void>
 }> {
-  const instanceId = config.instanceId
-
-  if (!instanceId) {
-    throw new Error('TREEPORT_INSTANCE_ID is required to start the daemon')
-  }
-
   await Promise.all([
     fs.mkdir(config.dataDir, { recursive: true, mode: 0o700 }),
     fs.mkdir(config.runtimeDir, { recursive: true, mode: 0o700 })
@@ -45,12 +39,12 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
 
   const record: DaemonRecord = {
     pid: process.pid,
-    instanceId,
-    version: config.appVersion ?? 'development',
+    instanceId: config.instanceId,
+    version: config.appVersion,
     apiUrl: config.apiUrl,
     dataDir: config.dataDir,
     startedAt: new Date().toISOString(),
-    installationMethod: config.installationMethod ?? 'development'
+    installationMethod: config.installationMethod
   }
 
   const openLock = () =>
@@ -100,7 +94,8 @@ async function acquireDaemonOwnershipPromise(config: AppConfig): Promise<{
       .then(
         (value) =>
           // SAFETY: Only instanceId is compared; any other parsed shape fails the comparison.
-          (JSON.parse(value) as Partial<DaemonRecord>).instanceId === instanceId
+          (JSON.parse(value) as Partial<DaemonRecord>).instanceId ===
+          config.instanceId
       )
       .catch(() => false)
 

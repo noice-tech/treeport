@@ -27,7 +27,6 @@ export async function restoreTestSnapshot(
       progress: null,
       programStatus: null,
       reset: null,
-      unknownOsc: null,
       renderHold: null,
       clipboardWrite: null
     }

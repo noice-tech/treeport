@@ -15,13 +15,7 @@ it('reads optional metadata without imposing a daemon release or health shape', 
   vi.stubGlobal('fetch', request)
 
   for (const version of ['0.1.0', '99.0.0', 'development', null]) {
-    request.mockResolvedValueOnce(
-      Response.json({
-        ...health,
-        version,
-        protocolVersion: 'unknown'
-      })
-    )
+    request.mockResolvedValueOnce(Response.json({ ...health, version }))
     expect(await Effect.runPromise(checkHealth(origin))).toEqual({
       hostname: health.hostname,
       version,

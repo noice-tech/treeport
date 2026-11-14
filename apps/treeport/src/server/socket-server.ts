@@ -47,7 +47,7 @@ import {
   type BrowserOwnerTransport,
   type BrowserTransport
 } from './browser-sessions.ts'
-import { networkTelemetry } from './network-telemetry.ts'
+import { logConnectionClosed } from './network-telemetry.ts'
 
 const HANDSHAKE_TIMEOUT_MS = 10_000
 const OUTBOUND_QUEUE_CAPACITY = 512
@@ -117,10 +117,6 @@ function json(value: string | Uint8Array): unknown | null {
   }
 }
 
-function byteLength(value: string | Uint8Array): number {
-  return typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength
-}
-
 export function createSocketServer({
   service,
   config,
@@ -163,7 +159,7 @@ export function createSocketServer({
     identity: AuthenticatedViewer | null
   ) => {
     let observedClose: { code: number; reason: string } | null = null
-    let telemetryOpened = false
+    let opened = false
     accepted.once('close', (code, reason) => {
       observedClose = { code, reason: reason.toString('utf8').slice(0, 256) }
     })
@@ -171,18 +167,12 @@ export function createSocketServer({
     return Effect.scoped(
       Effect.gen(function* () {
         const incoming = yield* Effect.acquireRelease(
-          Queue.bounded<{
-            message: string | Uint8Array
-            queuedAt: number
-          }>(64),
+          Queue.bounded<string | Uint8Array>(64),
           Queue.shutdown
         )
 
         const outgoing = yield* Effect.acquireRelease(
-          Queue.bounded<{
-            message: string | Uint8Array
-            queuedAt: number
-          }>(OUTBOUND_QUEUE_CAPACITY),
+          Queue.bounded<string | Uint8Array>(OUTBOUND_QUEUE_CAPACITY),
           Queue.shutdown
         )
 
@@ -212,46 +202,12 @@ export function createSocketServer({
           ).pipe(Effect.zipRight(Effect.fail(new Error(message))))
 
         const reader = yield* Effect.forkScoped(
-          socket.runRaw((message) =>
-            Queue.offer(incoming, { message, queuedAt: Date.now() }).pipe(
-              Effect.flatMap((accepted) =>
-                accepted
-                  ? networkTelemetry.message(channel, 'in', byteLength(message))
-                  : networkTelemetry.dropped(channel, 'dropped')
-              )
-            )
-          )
+          socket.runRaw((message) => Queue.offer(incoming, message))
         )
 
         const writer = Effect.zipRight(
           write(JSON.stringify({ event: 'connected', payload: null })),
-          Effect.forever(
-            Effect.gen(function* () {
-              const outgoingMessage = yield* Queue.take(outgoing)
-              const started = Date.now()
-              yield* networkTelemetry.duration(
-                channel,
-                'queue_wait',
-                started - outgoingMessage.queuedAt
-              )
-              yield* write(outgoingMessage.message)
-              yield* networkTelemetry.message(
-                channel,
-                'out',
-                byteLength(outgoingMessage.message)
-              )
-              yield* networkTelemetry.duration(
-                channel,
-                'socket_write_drain',
-                Date.now() - started
-              )
-              yield* Queue.size(outgoing).pipe(
-                Effect.flatMap((size) =>
-                  networkTelemetry.queueDepth(channel, size)
-                )
-              )
-            })
-          )
+          Effect.forever(Effect.flatMap(Queue.take(outgoing), write))
         )
 
         const send = (
@@ -262,22 +218,10 @@ export function createSocketServer({
             | BrowserOwnerServerMessage
             | null
         ): boolean => {
-          const message = JSON.stringify({ event, payload })
-
-          const offered = Queue.unsafeOffer(outgoing, {
-            message,
-            queuedAt: Date.now()
-          })
-
-          if (!offered) {
-            networkTelemetry.droppedNow(channel, 'dropped')
-          }
-
-          return offered
+          return Queue.unsafeOffer(outgoing, JSON.stringify({ event, payload }))
         }
 
-        yield* networkTelemetry.connectionOpened(channel)
-        telemetryOpened = true
+        opened = true
 
         const first = yield* Queue.take(incoming).pipe(
           Effect.timeoutFail({
@@ -286,16 +230,9 @@ export function createSocketServer({
           })
         )
 
-        yield* networkTelemetry.duration(
-          channel,
-          'queue_wait',
-          Date.now() - first.queuedAt
-        )
-        const handshake = parseSocketHandshake(json(first.message))
+        const handshake = parseSocketHandshake(json(first))
 
         if (!handshake) {
-          yield* networkTelemetry.decodeFailure(channel)
-
           return yield* rejectHandshake('INVALID_SOCKET_HANDSHAKE')
         }
 
@@ -394,16 +331,9 @@ export function createSocketServer({
         const messages = Effect.forever(
           Effect.gen(function* () {
             const raw = yield* Queue.take(incoming)
-            yield* networkTelemetry.duration(
-              channel,
-              'queue_wait',
-              Date.now() - raw.queuedAt
-            )
-            const parsed = parseSocketMessage(json(raw.message))
+            const parsed = parseSocketMessage(json(raw))
 
             if (!parsed) {
-              yield* networkTelemetry.decodeFailure(channel)
-
               return
             }
 
@@ -420,7 +350,6 @@ export function createSocketServer({
                 : null
 
               if (!event || !payload) {
-                yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid terminal message')
 
                 return
@@ -431,7 +360,6 @@ export function createSocketServer({
               const payload = parseBrowserClientMessage(parsed.payload)
 
               if (!payload) {
-                yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid Browser message')
 
                 return
@@ -442,7 +370,6 @@ export function createSocketServer({
               const payload = parseBrowserOwnerClientMessage(parsed.payload)
 
               if (!payload) {
-                yield* networkTelemetry.decodeFailure(channel)
                 accepted.close(1007, 'Invalid Browser owner message')
 
                 return
@@ -459,7 +386,7 @@ export function createSocketServer({
         )
       }).pipe(
         Effect.onExit((exit) => {
-          if (!telemetryOpened) {
+          if (!opened) {
             return Effect.void
           }
 
@@ -472,7 +399,7 @@ export function createSocketServer({
               : { closeCode: observedClose.code }
             : undefined
 
-          const closed = networkTelemetry.connectionClosed(
+          return logConnectionClosed(
             channel,
             Exit.isInterrupted(exit)
               ? 'interrupted'
@@ -483,10 +410,6 @@ export function createSocketServer({
                   : 'peer_closed',
             details
           )
-
-          return Exit.isInterrupted(exit)
-            ? Effect.zipRight(networkTelemetry.interrupted(channel), closed)
-            : closed
         })
       )
     ).pipe(

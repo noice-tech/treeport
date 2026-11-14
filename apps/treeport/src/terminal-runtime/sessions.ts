@@ -1408,7 +1408,6 @@ export class TerminalHostSessions {
               })
             }
           },
-          unknownOsc: null,
           renderHold: null,
           clipboardWrite: null
         }
@@ -2127,18 +2126,6 @@ export class TerminalHostSessions {
     )
   }
 
-  size(
-    terminalId: string
-  ): Effect.Effect<{ cols: number; rows: number } | null> {
-    return this.session(terminalId).pipe(
-      Effect.map((session) =>
-        session
-          ? { cols: session.terminal.cols, rows: session.terminal.rows }
-          : null
-      )
-    )
-  }
-
   runtimeState(terminalId: string): Effect.Effect<{
     title: string | null
     cwd: string | null
@@ -2725,12 +2712,6 @@ export class TerminalHostSessions {
     )
   }
 
-  terminalSize(
-    terminalId: string
-  ): Effect.Effect<{ cols: number; rows: number } | null> {
-    return this.size(terminalId)
-  }
-
   captureTerminal(
     terminalId: string,
     lines: number
@@ -2876,22 +2857,6 @@ export class TerminalHostSessions {
 
       return titleState(session)
     })
-  }
-
-  signalTerminal(
-    terminalId: string,
-    signal: 'SIGINT' | 'SIGTERM' | 'SIGKILL' | 'SIGHUP'
-  ): Effect.Effect<void> {
-    return this.session(terminalId).pipe(
-      Effect.tap((session) =>
-        Effect.sync(() => {
-          if (session?.status === 'running') {
-            session.pty.kill(signal)
-          }
-        })
-      ),
-      Effect.asVoid
-    )
   }
 
   killTerminal(

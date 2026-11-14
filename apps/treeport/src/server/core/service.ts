@@ -64,9 +64,6 @@ type ProjectApi = Pick<
   | 'registerProject'
   | 'requestWorkspaceOpen'
   | 'resolveRegisteredProject'
-  | 'resolveProject'
-  | 'resolveWorktree'
-  | 'updateProjectColor'
   | 'updateWorktreeDecoration'
   | 'updateWorktreeTitle'
 >
@@ -75,7 +72,6 @@ type WorktreeApi = Pick<
   WorktreeService,
   | 'beginCreateWorktree'
   | 'beginRemove'
-  | 'createWorktree'
   | 'listActiveOperations'
   | 'removePreview'
 >
@@ -90,7 +86,6 @@ type TerminalApi = Pick<
   | 'refreshTerminalStatus'
   | 'renameTerminal'
   | 'reorderTerminals'
-  | 'terminateAllTerminals'
 >
 
 type LauncherApi = Pick<
@@ -105,15 +100,8 @@ type LauncherApi = Pick<
 type AppApi = Pick<
   AppService,
   | 'authorizeBrowserApp'
-  | 'createBrowserApp'
-  | 'createWebApp'
-  | 'deleteBrowserApp'
   | 'deleteApp'
-  | 'deleteWebApp'
   | 'deleteWebAppStorage'
-  | 'getBrowserApp'
-  | 'getBrowserAppListeners'
-  | 'getAppListeners'
   | 'getWebAppContext'
   | 'getWebAppServiceContext'
   | 'getWebAppDiff'
@@ -123,9 +111,7 @@ type AppApi = Pick<
   | 'getWebAppListeners'
   | 'getWebAppStorage'
   | 'hasWebAppStorage'
-  | 'listBrowserApps'
   | 'listWebAppDefinitions'
-  | 'listWebApps'
   | 'openBrowserApp'
   | 'openBrowserAppFromApp'
   | 'openBrowserAppFromTerminal'

@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 import * as Effect from 'effect/Effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import type { AppConfig } from './config.ts'
 import {
   WebAppViteRuntime,
   WebAppRuntimeLayer,
@@ -91,122 +90,22 @@ async function fixture() {
     )
   ])
 
-  const config: AppConfig = {
-    host: '127.0.0.1',
-    port: 8733,
-    databasePath: path.join(root, 'treeport.db'),
-    dataDir: root,
-    cacheDir: path.join(root, 'cache'),
-    runtimeDir: path.join(root, 'runtime'),
-    shell: '/bin/sh',
-    gitPath: 'git',
-    apiUrl: 'http://127.0.0.1:8733',
-    remoteUrl: null,
-    webDevelopment: false,
-    appVersion: 'test'
-  }
-
   const source: ResolvedWebAppSource = {
     root: appRoot,
     entry: 'index.html',
     packageRoot,
-    development: false,
     definitionId: 'package:local:review:web-app:review',
     packageSource: './review',
     allowNetworkRequests: false
   }
 
-  return { root, appRoot, config, source }
-}
-
-function immutablePath(location: string): string {
-  return location.slice(location.indexOf('__treeport/'))
+  return { source }
 }
 
 describe('WebAppViteRuntime', () => {
-  it('compiles source packages atomically, reuses immutable builds, and keeps old builds available', async () => {
-    const { appRoot, config, source } = await fixture()
-    const runtime = new WebAppViteRuntime(config)
-    const logicalBase = '/api/web-apps/app/assets/'
-
-    const firstRequests = await Promise.all([
-      Effect.runPromise(runtime.resolve(source, '', logicalBase)),
-      Effect.runPromise(runtime.resolve(source, '', logicalBase))
-    ])
-
-    expect(firstRequests[0]).toMatchObject({
-      kind: 'redirect',
-      development: false
-    })
-    expect(firstRequests[1]).toEqual(firstRequests[0])
-
-    if (firstRequests[0]!.kind !== 'redirect') {
-      throw new Error('expected redirect')
-    }
-
-    const firstPath = immutablePath(firstRequests[0].location)
-
-    const document = await Effect.runPromise(
-      runtime.resolve(source, firstPath, logicalBase)
-    )
-
-    expect(document).toMatchObject({ kind: 'asset', immutable: true })
-
-    if (document.kind !== 'asset') {
-      throw new Error('expected compiled document')
-    }
-
-    const html = await fs.readFile(document.path, 'utf8')
-    const script = /src="\.\/(assets\/[^"]+\.js)"/u.exec(html)?.[1]
-    expect(script).toBeTruthy()
-
-    const compiledScript = await Effect.runPromise(
-      runtime.resolve(
-        source,
-        `${firstPath.slice(0, firstPath.lastIndexOf('/') + 1)}${script}`,
-        logicalBase
-      )
-    )
-
-    if (compiledScript.kind !== 'asset') {
-      throw new Error('expected compiled script')
-    }
-
-    const compiledSource = await fs.readFile(compiledScript.path, 'utf8')
-    expect(compiledSource).toContain('dependency loaded')
-    expect(compiledSource).toContain('treeport-app-v1')
-
-    expect(
-      await Effect.runPromise(runtime.resolve(source, '', logicalBase))
-    ).toEqual(firstRequests[0])
-    await fs.writeFile(
-      path.join(appRoot, 'app.tsx'),
-      "document.querySelector('#root').textContent = 'source changed'\n"
-    )
-
-    const changed = await Effect.runPromise(
-      runtime.resolve(source, '', logicalBase)
-    )
-
-    expect(changed).toMatchObject({ kind: 'redirect' })
-    expect(changed).not.toEqual(firstRequests[0])
-    expect(
-      await Effect.runPromise(runtime.resolve(source, firstPath, logicalBase))
-    ).toMatchObject({
-      kind: 'asset',
-      immutable: true
-    })
-
-    expect(
-      await Effect.runPromise(
-        Effect.flip(runtime.resolve(source, '../../outside.js', logicalBase))
-      )
-    ).toMatchObject({ code: 'INVALID_ASSET_PATH' })
-  })
-
   it('serves local source apps through Vite with sandbox-compatible headers', async () => {
-    const { config, source } = await fixture()
-    const runtime = new WebAppViteRuntime(config)
+    const { source } = await fixture()
+    const runtime = new WebAppViteRuntime()
 
     const server = http.createServer((request, response) => {
       runtime.handleDevelopmentRequest(request, response, () => {
@@ -228,11 +127,7 @@ describe('WebAppViteRuntime', () => {
       }
 
       const resolution = await Effect.runPromise(
-        runtime.resolve(
-          { ...source, development: true, allowNetworkRequests: true },
-          '',
-          '/api/web-apps/app/assets/'
-        )
+        runtime.resolve({ ...source, allowNetworkRequests: true }, '')
       )
 
       if (resolution.kind !== 'redirect') {
@@ -322,7 +217,7 @@ describe('WebAppViteRuntime', () => {
       expect(untrustedReferrerPolicy).toContain(browserOrigin)
       expect(untrustedReferrerPolicy).not.toContain('attacker.example')
     } finally {
-      await Effect.runPromise(runtime.dispose())
+      await Effect.runPromise(runtime.disposeDevelopmentServers())
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
       )
@@ -330,7 +225,7 @@ describe('WebAppViteRuntime', () => {
   })
 
   it('closes development servers when its layer scope closes', async () => {
-    const { config, source } = await fixture()
+    const { source } = await fixture()
     let runtime: WebAppViteRuntime | null = null
     let location = ''
 
@@ -357,18 +252,14 @@ describe('WebAppViteRuntime', () => {
             runtime = yield* WebAppRuntimePort
             runtime.attachHttpServer(server)
 
-            const resolution = yield* runtime.resolve(
-              { ...source, development: true },
-              '',
-              '/api/web-apps/app/assets/'
-            )
+            const resolution = yield* runtime.resolve(source, '')
 
             if (resolution.kind !== 'redirect') {
               throw new Error('expected development redirect')
             }
 
             location = resolution.location
-          }).pipe(Effect.provide(WebAppRuntimeLayer(config)))
+          }).pipe(Effect.provide(WebAppRuntimeLayer()))
         )
       )
 
@@ -384,31 +275,5 @@ describe('WebAppViteRuntime', () => {
         server.close((error) => (error ? reject(error) : resolve()))
       )
     }
-  })
-
-  it('returns an actionable in-frame error when a runtime dependency is missing', async () => {
-    const { appRoot, config, source } = await fixture()
-    await fs.writeFile(
-      path.join(appRoot, 'app.tsx'),
-      "import missing from 'not-installed'; document.body.textContent = missing\n"
-    )
-
-    const result = await Effect.runPromise(
-      new WebAppViteRuntime(config).resolve(
-        source,
-        '',
-        '/api/web-apps/app/assets/'
-      )
-    )
-
-    expect(result).toMatchObject({ kind: 'error', development: false })
-
-    if (result.kind !== 'error') {
-      throw new Error('expected build error')
-    }
-
-    expect(result.html).toContain('Web app could not be compiled')
-    expect(result.html).toContain('dependencies')
-    expect(result.html).not.toContain(source.packageRoot)
   })
 })

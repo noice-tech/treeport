@@ -5,8 +5,6 @@ import type { TerminalRecord } from './terminal.ts'
 
 const nullableStringSchema = Schema.NullOr(Schema.String)
 
-export const DESKTOP_PROTOCOL_VERSION = 3
-
 export type TreeportContext =
   | {
       managed: false
@@ -64,7 +62,6 @@ export const phoneAccessResponseSchema = Schema.Struct({
 export const healthResponseSchema = Schema.Struct({
   ok: Schema.Literal(true),
   version: Schema.String,
-  protocolVersion: Schema.Int,
   hostname: Schema.String,
   pid: Schema.Int,
   instanceId: nullableStringSchema,

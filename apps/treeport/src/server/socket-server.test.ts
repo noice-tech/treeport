@@ -17,8 +17,7 @@ import type {
   BrowserOwnerServerMessage,
   BrowserOwnerServerToClientEvents,
   BrowserServerMessage,
-  BrowserServerToClientEvents,
-  BrowserApp
+  BrowserServerToClientEvents
 } from '#protocol/browser'
 import type {
   TerminalClientToServerEvents,
@@ -27,7 +26,6 @@ import type {
   TerminalServerToClientEvents
 } from '#protocol/terminal-session'
 import type { TerminalRecord } from '#protocol/terminal'
-import type { WebApp } from '@treeport/app-sdk'
 import type {
   ProtocolSocket,
   ProtocolSocketOptions
@@ -94,8 +92,6 @@ interface NetworkFixture {
   events: ProductEventBus
   metadata: TerminalMetadataManager
   metadataSnapshot: ReturnType<typeof vi.fn<() => TerminalRuntimeMetadata[]>>
-  listWebApps: ReturnType<typeof vi.fn<() => Promise<WebApp[]>>>
-  listBrowserApps: ReturnType<typeof vi.fn<() => Promise<BrowserApp[]>>>
   getKnownTerminal: ReturnType<
     typeof vi.fn<
       (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
@@ -114,8 +110,6 @@ async function fixture(
 ): Promise<NetworkFixture> {
   const events = new ProductEventBus()
   const ptys: FakePty[] = []
-  const listWebApps = vi.fn<() => Promise<WebApp[]>>(async () => [])
-  const listBrowserApps = vi.fn<() => Promise<BrowserApp[]>>(async () => [])
 
   const getKnownTerminal = vi.fn<
     (terminalId?: string) => Effect.Effect<TerminalRecord, never, never>
@@ -143,9 +137,6 @@ async function fixture(
   // SAFETY: The socket fixture provides every service required by these effects.
   const service = testAccess<TreeportService>({
     events,
-    listWebApps,
-    listBrowserApps,
-    apps: { listWebApps, listBrowserApps },
     getKnownTerminal,
     terminals: { getKnownTerminal },
     getWorktree,
@@ -261,6 +252,9 @@ async function fixture(
     gitPath: 'git',
     apiUrl: 'http://127.0.0.1',
     remoteUrl: null,
+    appVersion: 'test',
+    instanceId: 'test-instance',
+    installationMethod: 'test',
     webDevelopment: false
   } satisfies AppConfig
 
@@ -296,8 +290,6 @@ async function fixture(
     events,
     metadata,
     metadataSnapshot,
-    listWebApps,
-    listBrowserApps,
     getKnownTerminal,
     ptys,
     service,

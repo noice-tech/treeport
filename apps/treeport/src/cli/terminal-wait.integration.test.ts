@@ -71,10 +71,6 @@ async function fixture() {
 
   const service = testAccess<TreeportService>({
     events,
-    apps: {
-      listWebApps: () => Effect.succeed([]),
-      listBrowserApps: () => Effect.succeed([])
-    },
     runEffect: (effect: Effect.Effect<unknown, unknown, never>) =>
       Effect.runPromise(effect)
   })
