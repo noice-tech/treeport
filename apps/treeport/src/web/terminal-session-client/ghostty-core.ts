@@ -52,6 +52,14 @@ const URL_PATTERN =
 
 const URL_ROW_LIMIT = 8
 
+// EXTERNAL: TUIs such as Claude Code and Pi hard-wrap long URLs at their own
+// margin instead of letting the terminal soft-wrap them.
+const URL_HARD_WRAP_MARGIN = 2
+
+const URL_CHAR = /[^\s"'!*(){}|\\^<>`]/
+
+const URL_END_CHAR = /[^\s"':,.!?{}|\\^~[\]`()<>]/
+
 const HISTORY_ROW_CACHE = 512
 
 let compiled: Promise<WebAssembly.Module> | null = null
@@ -411,7 +419,8 @@ export class GhosttyTerminalCore implements TerminalCore {
 
         while (
           end < this.viewport.length - 1 &&
-          this.viewport[end]!.metadata.wrapsToNext
+          (this.viewport[end]!.metadata.wrapsToNext ||
+            hardWrapsToNext(this.viewport[end]!, this.viewport[end + 1]!))
         ) {
           end++
         }
@@ -766,13 +775,13 @@ export class GhosttyTerminalCore implements TerminalCore {
     if (row) {
       const above: DecodedRow[] = []
 
-      for (
-        let current = row;
-        current.metadata.continuesPrevious && above.length < URL_ROW_LIMIT;
-      ) {
+      for (let current = row; above.length < URL_ROW_LIMIT;) {
         const previous = this.decodeHistoryRow(offset + above.length + 1)
 
-        if (!previous) {
+        if (
+          !previous ||
+          !(previous.metadata.wrapsToNext || hardWrapsToNext(previous, current))
+        ) {
           break
         }
 
@@ -782,10 +791,7 @@ export class GhosttyTerminalCore implements TerminalCore {
 
       const below: DecodedRow[] = []
 
-      for (
-        let current = row;
-        current.metadata.wrapsToNext && below.length < URL_ROW_LIMIT;
-      ) {
+      for (let current = row; below.length < URL_ROW_LIMIT;) {
         const nextOffset = offset - below.length - 1
 
         if (nextOffset < 0) {
@@ -797,7 +803,10 @@ export class GhosttyTerminalCore implements TerminalCore {
             ? this.decodeHistoryRow(nextOffset)
             : this.viewport[-nextOffset - 1]
 
-        if (!next) {
+        if (
+          !next ||
+          !(current.metadata.wrapsToNext || hardWrapsToNext(current, next))
+        ) {
           break
         }
 
@@ -1483,24 +1492,70 @@ function readLayout(vt: GhosttyVt) {
   }
 }
 
+function cellText(cell: CellData): string {
+  return cell.chars ?? String.fromCodePoint(cell.char)
+}
+
+function lastTextColumn(row: DecodedRow): number {
+  for (let col = row.raw.length - 1; col >= 0; col--) {
+    if (row.raw[col]!.width !== 0 && cellText(row.raw[col]!).trim() !== '') {
+      return col
+    }
+  }
+
+  return -1
+}
+
+function firstTextColumn(row: DecodedRow): number {
+  return row.raw.findIndex(
+    (cell) => cell.width !== 0 && cellText(cell).trim() !== ''
+  )
+}
+
+function hardWrapsToNext(row: DecodedRow, next: DecodedRow): boolean {
+  if (row.metadata.wrapsToNext) {
+    return false
+  }
+
+  const last = lastTextColumn(row)
+  const first = firstTextColumn(next)
+
+  return (
+    last >= row.raw.length - 1 - URL_HARD_WRAP_MARGIN &&
+    first !== -1 &&
+    URL_END_CHAR.test(cellText(row.raw[last]!)) &&
+    URL_CHAR.test(cellText(next.raw[first]!))
+  )
+}
+
 function linkUrls(rows: readonly DecodedRow[]): CellData[][] {
   const result = rows.map((row) => row.raw)
   let text = ''
   const positions: [number, number][] = []
-  result.forEach((cells, row) =>
+  result.forEach((cells, row) => {
+    const start =
+      row > 0 && hardWrapsToNext(rows[row - 1]!, rows[row]!)
+        ? firstTextColumn(rows[row]!)
+        : 0
+
+    const end =
+      row < rows.length - 1 && hardWrapsToNext(rows[row]!, rows[row + 1]!)
+        ? lastTextColumn(rows[row]!)
+        : cells.length - 1
+
     cells.forEach((cell, col) => {
-      if (cell.width === 0) {
+      if (cell.width === 0 || col < start || col > end) {
         return
       }
 
-      const chars = cell.chars ?? String.fromCodePoint(cell.char)
+      const chars = cellText(cell)
       text += chars
 
       for (let index = 0; index < chars.length; index++) {
         positions.push([row, col])
       }
     })
-  )
+  })
 
   if (!text.includes('://')) {
     return result
