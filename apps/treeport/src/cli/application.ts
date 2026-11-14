@@ -1983,15 +1983,14 @@ async function main(args: string[]): Promise<void> {
 
   projectRemoveCommand.action(async (identifier: string) => {
     const { force } = projectRemoveCommand.opts<{ force?: boolean }>()
-    const rootPath = identifier === '.' ? null : await canonical(identifier)
+    const exactRootPath =
+      identifier === '.' ? null : await canonical(identifier)
 
-    // Paths must name the project root exactly: falling back to the closest
-    // containing project could remove an unrelated parent such as Home.
     const project =
       identifier === '.'
         ? await resolveProject(identifier)
         : (await projects()).find(
-            (item) => item.id === identifier || item.rootPath === rootPath
+            (item) => item.id === identifier || item.rootPath === exactRootPath
           )
 
     if (!project) {
