@@ -114,9 +114,6 @@ export function integrationService(
       application.projects.openProject.bind(application.projects)
     ),
     reconcile: run(application.projects.reconcile.bind(application.projects)),
-    refreshProject: run(
-      application.projects.refreshProject.bind(application.projects)
-    ),
     registerProject: run(
       application.projects.registerProject.bind(application.projects)
     ),
