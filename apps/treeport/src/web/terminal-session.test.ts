@@ -473,6 +473,44 @@ function controllerSessionFixture() {
 }
 
 describe('terminal options', () => {
+  it('links every row of a URL hard-wrapped by a TUI to the full URL', () => {
+    const url =
+      'https://github.com/acme/project/pull/123/files/abcdef0123456789abcdef0123456789'
+
+    const core = new GhosttyTerminalCore(ghosttyModule, 100)
+    core.init(50, 8)
+    core.writeString(
+      // EXTERNAL: Claude Code fills the row and indents the continuation.
+      '● See https://github.com/acme/project/pull/123/fil\r\n' +
+        '  es/abcdef0123456789abcdef0123456789 for details.\r\n' +
+        // EXTERNAL: Pi keeps a one-column margin on both sides.
+        ' https://github.com/acme/project/pull/123/files/ \r\n' +
+        ' abcdef0123456789abcdef0123456789 now\r\n' +
+        'Docs are at https://example.test/guide/index.html.\r\n' +
+        'Next sentence.\r\n'
+    )
+
+    for (const [row, col] of [
+      [0, 6],
+      [0, 49],
+      [1, 2],
+      [1, 36],
+      [2, 1],
+      [3, 1],
+      [3, 32]
+    ] as const) {
+      expect(core.getCell(row, col).linkUri).toBe(url)
+    }
+
+    expect(core.getCell(1, 38).linkUri).toBeUndefined()
+    expect(core.getCell(3, 34).linkUri).toBeUndefined()
+    expect(core.getCell(4, 12).linkUri).toBe(
+      'https://example.test/guide/index.html'
+    )
+    expect(core.getCell(5, 0).linkUri).toBeUndefined()
+    core.dispose()
+  })
+
   it('does not activate links on modifier-right-click or middle-click', () => {
     const request = vi.fn()
     vi.stubGlobal('navigator', { platform: 'Linux x86_64' })
