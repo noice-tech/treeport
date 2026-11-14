@@ -634,6 +634,13 @@ export class ProjectService {
       }
 
       let project = yield* projectStore.getProject(projectId)
+
+      if (project.isHome) {
+        return yield* Effect.fail(
+          new DomainError('PROJECT_IS_HOME', 'Home cannot be removed', 409)
+        )
+      }
+
       const lockedWorktrees = project.worktrees.map((worktree) => worktree.id)
       yield* Effect.acquireUseRelease(
         locks
