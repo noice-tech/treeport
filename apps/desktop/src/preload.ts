@@ -463,11 +463,11 @@ const shellBridge = Object.freeze({
   openLocalServerSource(): Promise<void> {
     return ipcRenderer.invoke('shell:open-local-server-source')
   },
-  showUpdateLog(): Promise<void> {
-    return ipcRenderer.invoke('shell:show-update-log')
+  showUpdateLog(computerId: string | null): Promise<void> {
+    return ipcRenderer.invoke('shell:show-update-log', computerId)
   },
-  dismissUpdate(): Promise<void> {
-    return ipcRenderer.invoke('shell:dismiss-update')
+  dismissUpdate(computerId: string | null): Promise<void> {
+    return ipcRenderer.invoke('shell:dismiss-update', computerId)
   }
 })
 

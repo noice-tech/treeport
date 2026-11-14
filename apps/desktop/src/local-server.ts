@@ -57,11 +57,61 @@ function spawnInClone(
   )
 }
 
-interface UpdateResult {
+export interface UpdateResult {
   outcome: 'updated' | 'up-to-date' | 'diverged' | 'failed'
   head: string | null
   local: number
   remote: number
+}
+
+export function applyUpdateEvent(
+  update: LocalServerUpdate,
+  result: UpdateResult,
+  event: {
+    type: string
+    steps?: string[]
+    label?: string
+    seconds?: number
+    head?: string
+    commits?: number
+    local?: number
+    remote?: number
+  }
+): LocalServerUpdate {
+  const setStep = (step: Partial<LocalServerUpdateStep>) => ({
+    ...update,
+    steps: update.steps.map((item) =>
+      item.label === event.label ? { ...item, ...step } : item
+    )
+  })
+
+  if (event.type === 'plan') {
+    return {
+      ...update,
+      steps: (event.steps ?? []).map((label) => ({
+        label,
+        status: 'pending',
+        seconds: null
+      }))
+    }
+  } else if (event.type === 'step') {
+    return setStep({ status: 'running' })
+  } else if (event.type === 'done' || event.type === 'failed') {
+    return setStep({ status: event.type, seconds: event.seconds ?? null })
+  } else if (event.type === 'updated') {
+    result.head = event.head ?? null
+
+    return { ...update, commits: event.commits ?? null }
+  } else if (event.type === 'up-to-date') {
+    result.outcome = 'up-to-date'
+    result.head = event.head ?? null
+  } else if (event.type === 'diverged') {
+    result.outcome = 'diverged'
+    result.local = event.local ?? 0
+    result.remote = event.remote ?? 0
+  }
+
+  return update
 }
 
 type LocalServerEvent =
@@ -273,34 +323,13 @@ export class LocalServer {
           continue
         }
 
-        const event = JSON.parse(line.slice('::treeport '.length))
-
-        if (event.type === 'plan') {
-          setUpdate({
-            steps: event.steps.map((label: string) => ({
-              label,
-              status: 'pending',
-              seconds: null
-            }))
-          })
-        } else if (event.type === 'step') {
-          setStep(event.label, { status: 'running' })
-        } else if (event.type === 'done' || event.type === 'failed') {
-          setStep(event.label, {
-            status: event.type,
-            seconds: event.seconds
-          })
-        } else if (event.type === 'updated') {
-          result.head = event.head
-          setUpdate({ commits: event.commits })
-        } else if (event.type === 'up-to-date') {
-          result.outcome = 'up-to-date'
-          result.head = event.head
-        } else if (event.type === 'diverged') {
-          result.outcome = 'diverged'
-          result.local = event.local
-          result.remote = event.remote
-        }
+        setUpdate(
+          applyUpdateEvent(
+            update,
+            result,
+            JSON.parse(line.slice('::treeport '.length))
+          )
+        )
       }
     })
     child.stderr?.on('data', (chunk: Buffer) => {

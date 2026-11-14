@@ -28,7 +28,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import * as Effect from 'effect/Effect'
 import * as Scope from 'effect/Scope'
 import { DesktopRuntime } from './desktop-runtime'
-import { checkActivity, phoneAccess } from './backend-connection'
+import { checkActivity, checkHealth, phoneAccess } from './backend-connection'
 import { HostSession, HostSessions } from './host-session'
 import { ComputerStore } from './computer-store'
 import { LocalServer } from './local-server'
@@ -42,7 +42,8 @@ import type {
   ComputerUpdate,
   DesktopNavigationDirection,
   DesktopNavigationState,
-  DesktopShellState
+  DesktopShellState,
+  RemoteUpdateState
 } from './desktop-contract'
 import { filePathFromUrl } from './file-url'
 import {
@@ -52,6 +53,7 @@ import {
 import { isLoopbackUrl, parseComputerUrl } from './renderer-url'
 import { createRendererRequestHandler } from './renderer-request-handler'
 import { loadRenderer } from './renderer-load'
+import { runRemoteUpdate } from './remote-update'
 import { parseWorkspaceLink, type WorkspaceTarget } from './workspace-link'
 
 const dirname = __dirname
@@ -143,6 +145,7 @@ let windowState: WindowState | null = null
 let theme = defaultTheme
 let store: ComputerStore | null = null
 let localServer: LocalServer | null = null
+const remoteUpdates = new Map<string, RemoteUpdateState>()
 const desktopRuntime = new DesktopRuntime()
 let windowRuntime: DesktopRuntime | null = null
 let fullscreen = false
@@ -212,6 +215,7 @@ function shellState(): DesktopShellState {
     computers: store?.summaries() ?? [],
     connection: hostSessions?.active?.connection ?? { status: 'empty' },
     localServer: localServer?.state ?? null,
+    remoteUpdates: [...remoteUpdates.values()],
     navigation: navigationState(),
     theme
   }
@@ -273,20 +277,24 @@ function broadcastState(): void {
     startServerItem.enabled = state.localServer.status !== 'starting'
   }
 
-  const update = state.localServer?.update
+  const running = [
+    state.localServer?.update,
+    ...state.remoteUpdates.map((remote) => remote.update)
+  ].filter((update) => update?.status === 'running')
+
+  const steps = running.flatMap((update) => update?.steps ?? [])
   const updateItem = menu?.getMenuItemById('server-update')
 
   if (updateItem) {
-    updateItem.enabled = update?.status !== 'running'
+    updateItem.enabled = running.length === 0
   }
 
-  if (update?.status === 'running' && update.steps.length > 0) {
+  if (steps.length > 0) {
     mainWindow?.setProgressBar(
-      update.steps.filter((step) => step.status === 'done').length /
-        update.steps.length
+      steps.filter((step) => step.status === 'done').length / steps.length
     )
   } else {
-    mainWindow?.setProgressBar(update?.status === 'running' ? 2 : -1)
+    mainWindow?.setProgressBar(running.length > 0 ? 2 : -1)
   }
 
   const renderer = shellView?.webContents
@@ -612,6 +620,8 @@ const computerUpdateSchema = z.object({
   nameOverride: z.string().optional()
 })
 
+const updateComputerIdSchema = z.string().nullable()
+
 const nativeBrowserAppSchema = z.strictObject({
   appId: z.string().min(1).max(128)
 })
@@ -788,13 +798,49 @@ async function describeLocalClone(): Promise<void> {
   }
 }
 
-async function updateLocalServer(): Promise<void> {
+async function updateTreeport(): Promise<void> {
   const server = localServer
   const item = Menu.getApplicationMenu()?.getMenuItemById('server-update')
 
   if (!server || item?.enabled === false) {
     return
   }
+
+  const local = await desktopRuntime.run(checkHealth(server.state.origin))
+  const remotes: { id: string; name: string; origin: string }[] = []
+
+  for (const host of hostSessions?.visited.values() ?? []) {
+    const summary = store
+      ?.summaries()
+      .find((computer) => computer.id === host.computer.id)
+
+    if (
+      !summary ||
+      summary.origin === server.state.origin ||
+      host.connection.status !== 'ready'
+    ) {
+      continue
+    }
+
+    const health = await desktopRuntime.run(checkHealth(summary.origin))
+
+    if (
+      local &&
+      health?.pid === local.pid &&
+      health?.hostname === local.hostname
+    ) {
+      continue
+    }
+
+    remotes.push({ id: summary.id, name: summary.name, origin: summary.origin })
+  }
+
+  const names = ['this computer', ...remotes.map((remote) => remote.name)]
+
+  const listed =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 
   const response = await showMessage({
     type: 'question',
@@ -803,49 +849,137 @@ async function updateLocalServer(): Promise<void> {
     cancelId: 1,
     message: 'Update Treeport?',
     detail:
-      'Pulls the latest changes into your clone, rebuilds, and restarts the server. Terminals keep running.'
+      remotes.length === 0
+        ? 'Pulls the latest changes into your clone, rebuilds, and restarts the server. Terminals keep running.'
+        : `Updates ${listed}: pulls the latest changes, rebuilds, and restarts each server. Terminals keep running.`
   })
 
   if (response !== 0) {
     return
   }
 
-  const result = await server.runUpdate()
-  const host = hostSessions?.active
+  const reload = (origin: string) => {
+    const host = [...(hostSessions?.visited.values() ?? [])].find(
+      (session) => session.computer.origin === origin
+    )
 
-  if (
-    result.outcome === 'updated' &&
-    host?.computer.origin === server.state.origin
-  ) {
-    host.view.webContents.reload()
+    if (host?.connection.status === 'ready') {
+      host.view.webContents.reload()
+    }
   }
+
+  const results = await Promise.all([
+    server.runUpdate().then((result) => {
+      if (result.outcome === 'updated') {
+        reload(server.state.origin)
+      }
+
+      return { name: 'This computer', clone: server.state.sourceRoot, result }
+    }),
+    ...remotes.map((remote) =>
+      runRemoteUpdate(
+        remote.origin,
+        path.join(app.getPath('userData'), `update-output-${remote.id}.log`),
+        (update) => {
+          remoteUpdates.set(remote.id, {
+            computerId: remote.id,
+            name: remote.name,
+            update
+          })
+          broadcastState()
+        }
+      ).then((result) => {
+        const finished = remoteUpdates.get(remote.id)
+
+        if (result.outcome === 'updated') {
+          reload(remote.origin)
+          setTimeout(() => {
+            if (remoteUpdates.get(remote.id) === finished) {
+              remoteUpdates.delete(remote.id)
+              broadcastState()
+            }
+          }, 8_000)
+        } else if (result.outcome === 'up-to-date') {
+          remoteUpdates.delete(remote.id)
+          broadcastState()
+        }
+
+        return { name: remote.name, clone: null, result }
+      })
+    )
+  ])
 
   void describeLocalClone()
 
-  if (result.outcome === 'up-to-date') {
-    await showMessage({
-      type: 'info',
-      message: 'Treeport is up to date',
-      detail: result.head ? `You’re on ${result.head}.` : ''
-    })
-  } else if (result.outcome === 'diverged') {
-    const commits = (count: number) =>
-      `${count} commit${count === 1 ? '' : 's'}`
+  const commits = (count: number) => `${count} commit${count === 1 ? '' : 's'}`
+  const diverged = results.filter(({ result }) => result.outcome === 'diverged')
 
-    const response = await showMessage({
-      type: 'warning',
-      buttons: ['Copy Agent Prompt', 'OK'],
-      defaultId: 1,
-      cancelId: 1,
-      message: 'Your clone needs a merge',
-      detail: `Your clone has ${commits(result.local)} your fork doesn’t, and your fork has ${commits(result.remote)} new. Ask your coding agent to merge them, then update again.`
-    })
+  const agentPrompt = diverged
+    .map(({ name, clone }) =>
+      clone
+        ? `Merge the upstream changes into my Treeport clone at ${clone} and keep my local commits. Then run treeport update.`
+        : `On ${name}, merge the upstream changes into its Treeport clone and keep my local commits. Then run treeport update there.`
+    )
+    .join('\n')
 
-    if (response === 0) {
-      clipboard.writeText(
-        `Merge the upstream changes into my Treeport clone at ${server.state.sourceRoot} and keep my local commits. Then run treeport update.`
-      )
+  if (results.length === 1) {
+    const { result } = results[0]
+
+    if (result.outcome === 'up-to-date') {
+      await showMessage({
+        type: 'info',
+        message: 'Treeport is up to date',
+        detail: result.head ? `You’re on ${result.head}.` : ''
+      })
+    } else if (result.outcome === 'diverged') {
+      const response = await showMessage({
+        type: 'warning',
+        buttons: ['Copy Agent Prompt', 'OK'],
+        defaultId: 1,
+        cancelId: 1,
+        message: 'Your clone needs a merge',
+        detail: `Your clone has ${commits(result.local)} your fork doesn’t, and your fork has ${commits(result.remote)} new. Ask your coding agent to merge them, then update again.`
+      })
+
+      if (response === 0) {
+        clipboard.writeText(agentPrompt)
+      }
     }
+
+    return
+  }
+
+  const changed = results.filter(
+    ({ result }) =>
+      result.outcome === 'updated' || result.outcome === 'up-to-date'
+  )
+
+  const lines = results.map(({ name, result }) =>
+    result.outcome === 'updated'
+      ? `${name} — updated${result.head ? ` to ${result.head}` : ''}`
+      : result.outcome === 'up-to-date'
+        ? `${name} — up to date${result.head ? ` at ${result.head}` : ''}`
+        : result.outcome === 'diverged'
+          ? `${name} — needs a merge (${commits(result.local)} local, ${commits(result.remote)} new)`
+          : `${name} — couldn’t update`
+  )
+
+  const updateResponse = await showMessage({
+    type: changed.length === results.length ? 'info' : 'warning',
+    buttons: diverged.length > 0 ? ['Copy Agent Prompt', 'OK'] : ['OK'],
+    defaultId: diverged.length > 0 ? 1 : 0,
+    cancelId: diverged.length > 0 ? 1 : 0,
+    message:
+      changed.length === results.length
+        ? results.every(({ result }) => result.outcome === 'up-to-date')
+          ? 'Treeport is up to date'
+          : 'Treeport updated'
+        : `Updated ${changed.length} of ${results.length} computers`,
+    detail: lines.join('\n')
+  })
+
+  if (diverged.length > 0 && updateResponse === 0) {
+    clipboard.writeText(agentPrompt)
   }
 }
 
@@ -928,7 +1062,7 @@ function installMenu(): void {
         {
           id: 'server-update',
           label: 'Update Treeport…',
-          click: () => void updateLocalServer()
+          click: () => void updateTreeport()
         }
       ]
     : []
@@ -1856,14 +1990,32 @@ function registerIpc(): void {
       return shell.openPath(localServer.logPath).then(() => undefined)
     }
   })
-  ipcMain.handle('shell:show-update-log', (event) => {
-    if (isTrustedShellEvent(event) && localServer) {
-      return shell.openPath(localServer.updateLogPath).then(() => undefined)
+  ipcMain.handle('shell:show-update-log', (event, value) => {
+    const computerId = updateComputerIdSchema.safeParse(value).data ?? null
+
+    if (!isTrustedShellEvent(event) || !localServer) {
+      return
     }
+
+    const logPath =
+      computerId !== null && remoteUpdates.has(computerId)
+        ? path.join(app.getPath('userData'), `update-output-${computerId}.log`)
+        : localServer.updateLogPath
+
+    return shell.openPath(logPath).then(() => undefined)
   })
-  ipcMain.handle('shell:dismiss-update', (event) => {
-    if (isTrustedShellEvent(event)) {
+  ipcMain.handle('shell:dismiss-update', (event, value) => {
+    const computerId = updateComputerIdSchema.safeParse(value).data ?? null
+
+    if (!isTrustedShellEvent(event)) {
+      return
+    }
+
+    if (computerId === null) {
       localServer?.dismissUpdate()
+    } else if (remoteUpdates.get(computerId)?.update.status !== 'running') {
+      remoteUpdates.delete(computerId)
+      broadcastState()
     }
   })
   ipcMain.handle('shell:open-local-server-source', (event) => {

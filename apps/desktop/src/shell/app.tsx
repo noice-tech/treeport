@@ -64,9 +64,29 @@ export function App() {
   )
 
   const [selectorOpen, setSelectorOpen] = useState(false)
-  const [updateOpenAt, setUpdateOpenAt] = useState<number | null>(null)
-  const update = state?.localServer?.update ?? null
-  const updateOpen = update !== null && update.startedAt === updateOpenAt
+  const [updateOpenId, setUpdateOpenId] = useState<string | null>(null)
+
+  const updates = [
+    ...(state?.localServer?.update
+      ? [
+          {
+            computerId: null,
+            name: 'This computer',
+            update: state.localServer.update
+          }
+        ]
+      : []),
+    ...(state?.remoteUpdates ?? [])
+  ]
+
+  const updateId = (computerId: string | null, startedAt: number) =>
+    `${computerId ?? 'local'}:${startedAt}`
+
+  const updateOpen = updates.some(
+    ({ computerId, update }) =>
+      updateId(computerId, update.startedAt) === updateOpenId
+  )
+
   const [terminalSelectionActive, setTerminalSelectionActive] = useState(false)
 
   useEffect(
@@ -181,16 +201,21 @@ export function App() {
               : 'pointer-events-none fixed inset-x-0 top-0 z-80 flex h-8 items-center justify-center gap-1'
           }
         >
-          {update ? (
-            <UpdateChip
-              update={update}
-              align={state.platform === 'darwin' ? 'end' : 'center'}
-              open={updateOpen}
-              onOpenChange={(open) =>
-                setUpdateOpenAt(open ? update.startedAt : null)
-              }
-            />
-          ) : null}
+          {updates.map(({ computerId, name, update }) => {
+            const id = updateId(computerId, update.startedAt)
+
+            return (
+              <UpdateChip
+                key={computerId ?? 'local'}
+                computerId={computerId}
+                label={updates.length > 1 ? name : null}
+                update={update}
+                align={state.platform === 'darwin' ? 'end' : 'center'}
+                open={updateOpenId === id}
+                onOpenChange={(open) => setUpdateOpenId(open ? id : null)}
+              />
+            )
+          })}
           <ComputerSelector
             state={state}
             open={selectorOpen}

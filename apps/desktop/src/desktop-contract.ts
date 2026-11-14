@@ -81,6 +81,12 @@ export interface LocalServerState {
   update: LocalServerUpdate | null
 }
 
+export interface RemoteUpdateState {
+  computerId: string
+  name: string
+  update: LocalServerUpdate
+}
+
 export interface DesktopShellState {
   appVersion: string
   packaged: boolean
@@ -90,6 +96,7 @@ export interface DesktopShellState {
   computers: ComputerSummary[]
   connection: ConnectionState
   localServer: LocalServerState | null
+  remoteUpdates: RemoteUpdateState[]
   navigation: DesktopNavigationState
   theme: TreeportTheme
 }

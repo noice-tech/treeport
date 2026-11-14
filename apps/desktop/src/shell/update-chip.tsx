@@ -9,22 +9,28 @@ import type { LocalServerUpdate } from '../desktop-contract'
 import { Button, cn } from './ui'
 
 export function UpdateChip({
+  computerId,
+  label,
   update,
   align,
   open,
   onOpenChange
 }: {
+  computerId: string | null
+  label: string | null
   update: LocalServerUpdate
   align: 'center' | 'end'
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const title =
+  const status =
     update.status === 'running'
       ? 'Updating Treeport'
       : update.status === 'updated'
         ? 'Treeport is updated'
         : 'Treeport couldn’t update'
+
+  const title = label ? `${status} on ${label}` : status
 
   return (
     <DropdownMenu.Root modal={false} open={open} onOpenChange={onOpenChange}>
@@ -51,6 +57,7 @@ export function UpdateChip({
             <CircleAlertIcon />
           )}
           <span>
+            {label ? `${label} · ` : null}
             {update.status === 'running'
               ? 'Updating…'
               : update.status === 'updated'
@@ -121,7 +128,9 @@ export function UpdateChip({
           <div className="flex justify-end gap-1.5 border-t border-white/8 pt-2">
             <Button
               size="xs"
-              onClick={() => void window.treeportShell.showUpdateLog()}
+              onClick={() =>
+                void window.treeportShell.showUpdateLog(computerId)
+              }
             >
               Show Log
             </Button>
@@ -130,7 +139,7 @@ export function UpdateChip({
                 size="xs"
                 onClick={() => {
                   onOpenChange(false)
-                  void window.treeportShell.dismissUpdate()
+                  void window.treeportShell.dismissUpdate(computerId)
                 }}
               >
                 Dismiss

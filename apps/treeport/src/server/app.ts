@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -618,6 +618,8 @@ export function createApp({
         }
   }
 
+  let updating = false
+
   const routes = [
     ...(push
       ? [
@@ -1037,6 +1039,78 @@ export function createApp({
           url: config.apiUrl
         })
       )
+    ),
+    route(
+      'POST',
+      '/api/update',
+      Effect.gen(function* () {
+        const root = fileURLToPath(new URL('../../../../', import.meta.url))
+        const script = path.join(root, 'scripts', 'update.mjs')
+
+        const available = yield* Effect.promise(() =>
+          fs.access(script).then(
+            () => true,
+            () => false
+          )
+        )
+
+        if (!available) {
+          return yield* Effect.fail(
+            new DomainError(
+              'UPDATE_UNAVAILABLE',
+              `This Treeport doesn’t run from a clone; ${script} is missing.`,
+              409
+            )
+          )
+        }
+
+        if (updating) {
+          return yield* Effect.fail(
+            new DomainError(
+              'UPDATE_RUNNING',
+              'Treeport is already updating.',
+              409
+            )
+          )
+        }
+
+        updating = true
+
+        const child = spawn(process.execPath, [script], {
+          cwd: root,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            TREEPORT_PORT: String(config.port),
+            TREEPORT_PROGRESS: '1'
+          }
+        })
+
+        return HttpServerResponse.stream(
+          Stream.async<Uint8Array>((emit) => {
+            const encoder = new TextEncoder()
+            child.stdout.on('data', (chunk: Buffer) => void emit.single(chunk))
+            child.stderr.on('data', (chunk: Buffer) => void emit.single(chunk))
+
+            const finish = (code: number) => {
+              updating = false
+              void emit.single(
+                encoder.encode(
+                  `\n::treeport ${JSON.stringify({ type: 'exit', code })}\n`
+                )
+              )
+              void emit.end()
+            }
+
+            child.once('error', () => finish(1))
+            child.once('exit', (code) => finish(code ?? 1))
+          }),
+          {
+            contentType: 'text/plain; charset=utf-8',
+            headers: { 'cache-control': 'no-store' }
+          }
+        )
+      })
     ),
     route(
       'GET',
