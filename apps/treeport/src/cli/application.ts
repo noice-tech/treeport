@@ -51,6 +51,11 @@ import {
   resolveLauncherArgs,
   resolveLauncherTreeTitle
 } from '#protocol/launcher'
+import {
+  computerResponseSchema,
+  computersResponseSchema,
+  type ComputerEntry
+} from '#protocol/computer'
 import { TreeportRpcs } from '#protocol/rpc'
 import { treeportRpcClientLayer } from '#protocol/rpc-client'
 import {
@@ -84,7 +89,7 @@ import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import { parseDurationMs } from '../duration.ts'
-import { extractJsonOutput } from './args.ts'
+import { extractComputer, extractJsonOutput } from './args.ts'
 import { OpenWorkspaceError, openWorkspace } from './open.ts'
 import {
   daemonHealth,
@@ -1001,6 +1006,31 @@ async function waitForTerminal(
   }
 }
 
+function findComputer(
+  computers: readonly ComputerEntry[],
+  name: string
+): ComputerEntry | null {
+  const wanted = name.toLowerCase()
+
+  return (
+    computers.find(
+      (computer) =>
+        computer.id === name ||
+        computer.name.toLowerCase() === wanted ||
+        new URL(computer.url).hostname.split('.')[0] === wanted
+    ) ?? null
+  )
+}
+
+function unknownComputerMessage(
+  computers: readonly ComputerEntry[],
+  name: string
+): string {
+  return computers.length === 0
+    ? `Unknown computer ${name}. No other computers are known yet; add one with treeport computers add <url>.`
+    : `Unknown computer ${name}. Known computers: ${computers.map((computer) => computer.name).join(', ')}.`
+}
+
 function print<Value>(value: Value, human?: () => string): void {
   writeStdout(
     `${jsonOutput ? JSON.stringify(value) : human ? human() : JSON.stringify(value, null, 2)}\n`
@@ -1028,6 +1058,10 @@ async function main(args: string[]): Promise<void> {
     )
     .argument('[folder]', 'folder or folder inside a Git repository to open')
     .option('--json', 'emit machine-readable JSON')
+    .option(
+      '--computer <name>',
+      'run the command on another of your Treeport computers'
+    )
     .configureOutput({
       getOutHasColors: () => output.enabled,
       getErrHasColors: () => errorOutput.enabled,
@@ -1868,6 +1902,76 @@ async function main(args: string[]): Promise<void> {
 
       return lines.join('\n')
     })
+  })
+
+  const computersCommand = program
+    .command('computers')
+    .description('List, add, and forget your other Treeport computers')
+    .option('--json', 'emit machine-readable JSON')
+
+  computersCommand.action(async () => {
+    const body = await request('/api/computers', computersResponseSchema)
+
+    print(body, () =>
+      body.computers.length === 0
+        ? `No other computers yet. Add one with treeport computers add <url>.`
+        : body.computers
+            .map(
+              (computer) =>
+                `${computer.name}\t${computer.url}\tseen ${new Date(computer.seenAt).toISOString()}`
+            )
+            .join('\n')
+    )
+  })
+
+  const computersAddCommand = computersCommand
+    .command('add')
+    .description('Add a Treeport computer by its Tailscale Serve URL')
+    .argument('<url>', 'for example https://macbook-pro.example.ts.net')
+    .option('--json', 'emit machine-readable JSON')
+
+  computersAddCommand.action(async (url: string) => {
+    const origin = URL.parse(url.includes('://') ? url : `https://${url}`)
+
+    if (!origin) {
+      throw new CliError(`Invalid computer URL: ${url}`, 2)
+    }
+
+    const body = await request('/api/computers', computerResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify({ url: origin.origin, restoreForgotten: true })
+    })
+
+    print(
+      body.computer,
+      () => `Added ${body.computer.name} (${body.computer.url})`
+    )
+  })
+
+  const computersForgetCommand = computersCommand
+    .command('forget')
+    .description('Remove a computer from all of your Treeport computers')
+    .argument('<name>', 'computer name or ID')
+    .option('--json', 'emit machine-readable JSON')
+
+  computersForgetCommand.action(async (name: string) => {
+    const body = await request('/api/computers', computersResponseSchema)
+    const computer = findComputer(body.computers, name)
+
+    if (!computer) {
+      throw new CliError(
+        unknownComputerMessage(body.computers, name),
+        5,
+        'COMPUTER_NOT_FOUND'
+      )
+    }
+
+    await request('/api/computers/forget', okResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify({ id: computer.id })
+    })
+
+    print({ ok: true, computer }, () => `Forgot ${computer.name}`)
   })
 
   const projectCommand = program
@@ -3215,6 +3319,7 @@ export async function runCliApplication(
   contextWorktreeId = environment.TREEPORT_WORKTREE_ID?.trim() || undefined
   contextTerminalId = environment.TREEPORT_TERMINAL_ID?.trim() || undefined
   jsonOutput = extractJsonOutput(options.args)
+  const computerName = extractComputer(options.args)
   workingDirectory = options.cwd ?? process.cwd()
   writeStdout = options.stdout ?? ((value) => process.stdout.write(value))
   writeStderr = options.stderr ?? ((value) => process.stderr.write(value))
@@ -3231,6 +3336,29 @@ export async function runCliApplication(
   )
 
   try {
+    if (computerName !== null) {
+      if (!computerName) {
+        throw new CliError('--computer needs a computer name', 2, 'USAGE_ERROR')
+      }
+
+      const known = await request('/api/computers', computersResponseSchema)
+      const computer = findComputer(known.computers, computerName)
+
+      if (!computer) {
+        throw new CliError(
+          unknownComputerMessage(known.computers, computerName),
+          5,
+          'COMPUTER_NOT_FOUND'
+        )
+      }
+
+      apiUrl = computer.url
+      configuredApiUrl = computer.url
+      contextProjectId = undefined
+      contextWorktreeId = undefined
+      contextTerminalId = undefined
+    }
+
     await main([...options.args])
   } catch (error) {
     const cliError =

@@ -150,6 +150,25 @@ treeport terminal send-keys <terminal-id> Enter
 
 Sending to an exited terminal fails. Follow up with `terminal wait` and `terminal capture` to observe the result.
 
+## Work on another computer
+
+When the user asks to run something on another of their computers, list the Treeport computers this one knows:
+
+```sh
+treeport computers
+```
+
+Add `--computer <name>` to send any command to that computer's Treeport instead of this one. IDs, paths, and `.` from this terminal's context do not apply there, so find the target tree on that computer first:
+
+```sh
+treeport --computer <name> worktree list
+treeport --computer <name> terminal create --worktree <remote-tree-id> --name <terminal-name> -- <program> <arg> ...
+treeport --computer <name> terminal wait <terminal-id> --until exit --timeout 10m
+treeport --computer <name> terminal capture <terminal-id> --lines 200
+```
+
+If the computer is not listed, ask the user for its Tailscale Serve URL and add it with `treeport computers add <url>`. Treeport shares it with the user's other computers. Never forget a computer unless the user asks.
+
 ## Register and run launchers
 
 Launchers are saved programs that the Treeport UI and `treeport launch` start in a tree. A lowercase `${name}` inside an argument is an input that the caller fills in when launching. Treeport passes input values through without interpreting them.

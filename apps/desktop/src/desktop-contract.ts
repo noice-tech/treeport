@@ -33,6 +33,11 @@ export interface SavedComputer {
   lastSelectedAt?: string
 }
 
+export interface DiscoveredComputer {
+  name: string
+  origin: string
+}
+
 export interface ComputerSummary extends SavedComputer {
   name: string
   selected: boolean
@@ -94,6 +99,7 @@ export interface DesktopShellState {
   fullscreen: boolean
   selectedComputerId?: string
   computers: ComputerSummary[]
+  discoveredComputers: DiscoveredComputer[]
   connection: ConnectionState
   updatesPaused: boolean
   localServer: LocalServerState | null

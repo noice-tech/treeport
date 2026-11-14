@@ -169,9 +169,18 @@ import type { BrowserSessionManager } from './browser-sessions.ts'
 import { authenticatedViewers, isLoopbackAddress } from './request-security.ts'
 import type { WorkspacePresenceManager } from './workspace-presence.ts'
 import type { WebPushManager } from './web-push.ts'
+import type { ComputerDirectory } from './computers.ts'
 import { findProjectIcon } from './project-icon.ts'
 import type { AppServices } from './app-services.ts'
 import { networkTelemetry } from './network-telemetry.ts'
+import { tailscaleServeUrl } from './tailscale.ts'
+import {
+  computerAddSchema,
+  computerExchangeSchema,
+  computerForgetSchema,
+  computerResponseSchema,
+  computersResponseSchema
+} from '#protocol/computer'
 
 const UPLOAD_MIME_EXTENSIONS = new Map([
   ['application/pdf', 'pdf'],
@@ -252,6 +261,7 @@ interface AppDependencies {
   browserSessions?: BrowserSessionManager
   presence: WorkspacePresenceManager
   push?: WebPushManager
+  computers: ComputerDirectory
   rpcHttpApp?: HttpApp.Default<never, Scope.Scope>
   webDist?: string
 }
@@ -424,24 +434,6 @@ export interface TreeportHttpApp {
 
 const execute = promisify(execFile)
 
-const tailscaleServeStatusSchema = Schema.parseJson(
-  Schema.Struct({
-    Web: Schema.optional(
-      Schema.Record({
-        key: Schema.String,
-        value: Schema.Struct({
-          Handlers: Schema.optional(
-            Schema.Record({
-              key: Schema.String,
-              value: Schema.Struct({ Proxy: Schema.optional(Schema.String) })
-            })
-          )
-        })
-      })
-    )
-  })
-)
-
 export function createApp({
   service,
   config,
@@ -451,6 +443,7 @@ export function createApp({
   appServices,
   presence,
   push,
+  computers,
   rpcHttpApp,
   webDist
 }: AppDependencies): TreeportHttpApp {
@@ -563,29 +556,30 @@ export function createApp({
     return identity
   })
 
+  const computerOwner = Effect.gen(function* () {
+    const request = yield* serverRequest
+
+    yield* operation(() =>
+      computers.authorize(
+        authenticatedViewers.get(
+          NodeHttpServerRequest.toIncomingMessage(request)
+        )?.account
+      )
+    )
+  })
+
   const tailscaleTarget = `http://127.0.0.1:${config.port}`
 
   const tailscaleServeCommand = `tailscale serve --bg --https=${config.port} ${tailscaleTarget}`
 
-  // EXTERNAL: Tailscale Serve owns the remote address. Read its routes instead of
-  // configuring one, so routes added by the desktop app or by hand both work.
   const phoneAccess = async () => {
     if (config.remoteUrl) {
       return { url: config.remoteUrl, error: null, setupCommand: null }
     }
 
-    const status = await execute('tailscale', ['serve', 'status', '--json'], {
-      timeout: 5_000
-    }).then(
-      ({ stdout }) =>
-        Option.getOrElse(
-          Schema.decodeUnknownOption(tailscaleServeStatusSchema)(stdout),
-          () => ({ Web: undefined })
-        ),
-      () => null
-    )
+    const serve = await tailscaleServeUrl(config.port)
 
-    if (!status) {
+    if (!serve.installed) {
       return {
         url: null,
         error:
@@ -594,22 +588,8 @@ export function createApp({
       }
     }
 
-    const hostPort = Object.entries(status.Web ?? {}).find(([, server]) => {
-      const proxy = URL.parse(server.Handlers?.['/']?.Proxy ?? '')
-
-      return (
-        proxy !== null &&
-        ['127.0.0.1', 'localhost', '[::1]'].includes(proxy.hostname) &&
-        proxy.port === String(config.port)
-      )
-    })?.[0]
-
-    return hostPort
-      ? {
-          url: `https://${hostPort.replace(/:443$/u, '')}`,
-          error: null,
-          setupCommand: null
-        }
+    return serve.url
+      ? { url: serve.url, error: null, setupCommand: null }
       : {
           url: null,
           error:
@@ -1147,6 +1127,62 @@ export function createApp({
           200,
           { 'cache-control': 'no-store' }
         )
+      })
+    ),
+    route(
+      'GET',
+      '/api/computers',
+      Effect.gen(function* () {
+        yield* computerOwner
+        const self = yield* operation(() => computers.self())
+
+        return jsonContractResponse(
+          computersResponseSchema,
+          {
+            self: { id: computers.id, name: self.name, url: self.url },
+            computers: computers.list()
+          },
+          200,
+          { 'cache-control': 'no-store' }
+        )
+      })
+    ),
+    route(
+      'POST',
+      '/api/computers/exchange',
+      Effect.gen(function* () {
+        yield* computerOwner
+        const body = yield* requestBody(computerExchangeSchema)
+        const response = yield* operation(() => computers.receive(body))
+
+        return jsonContractResponse(computerExchangeSchema, response, 200, {
+          'cache-control': 'no-store'
+        })
+      })
+    ),
+    route(
+      'POST',
+      '/api/computers',
+      Effect.gen(function* () {
+        yield* computerOwner
+        const body = yield* requestBody(computerAddSchema)
+
+        const computer = yield* operation(() =>
+          computers.add(body.url, body.restoreForgotten)
+        )
+
+        return jsonContractResponse(computerResponseSchema, { computer })
+      })
+    ),
+    route(
+      'POST',
+      '/api/computers/forget',
+      Effect.gen(function* () {
+        yield* computerOwner
+        const body = yield* requestBody(computerForgetSchema)
+        yield* operation(() => computers.forget(body.id))
+
+        return jsonContractResponse(okResponseSchema, { ok: true })
       })
     ),
     route(

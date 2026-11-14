@@ -16,3 +16,8 @@ export const workspaceActivityResponseSchema: z.ZodType<WorkspaceActivityRespons
     working: z.number().int().nonnegative(),
     needsAttention: z.number().int().nonnegative()
   })
+
+export const computersListingSchema = z.object({
+  self: z.object({ url: z.string().nullable() }),
+  computers: z.array(z.object({ name: z.string(), url: z.string() }))
+})

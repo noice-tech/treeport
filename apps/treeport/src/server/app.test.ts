@@ -29,6 +29,7 @@ import { createApp } from './app.ts'
 import type { WebAppAssetResolution } from './core/web-app-vite-runtime.ts'
 import type { TerminalMetadataManager } from './terminal-metadata.ts'
 import type { BrowserSessionManager } from './browser-sessions.ts'
+import type { ComputerDirectory } from './computers.ts'
 
 function fixture(webDist = '/missing') {
   const config: AppConfig = {
@@ -603,6 +604,7 @@ function fixture(webDist = '/missing') {
     terminalMetadata,
     browserSessions,
     presence,
+    computers: testAccess<ComputerDirectory>({}),
     webDist
   })
 
