@@ -1984,6 +1984,7 @@ function WorkspaceApp() {
           activeProject={activeProject}
           selectedWorktree={selectedWorktree}
           selectedTerminalId={selectedTerminalId}
+          shortcutsBlocked={workspaceActionsBlocked}
           pendingWorktrees={pendingWorktrees}
           pendingRemovals={pendingRemovals}
           onRetryProjects={() => void refetchProjects()}

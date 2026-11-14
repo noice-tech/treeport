@@ -1,4 +1,9 @@
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode
+} from 'react'
 import {
   ArrowUturnLeftIcon,
   ChevronDownIcon,
@@ -67,6 +72,7 @@ import type {
 import { WorktreeTitleDialog } from '../worktrees/worktree-title-dialog'
 import { SidebarAction } from './sidebar-action'
 import { isApplePlatform } from '../../lib/platform'
+import { useProjectSwitcher } from './workspace-shell'
 
 function copyText(text: string) {
   const copyBuffer = document.createElement('textarea')
@@ -352,6 +358,7 @@ export interface WorkspaceTreeProps {
   activeProject: ProjectRecord | null
   selectedWorktree: WorktreeRecord | null
   selectedTerminalId: string | null
+  shortcutsBlocked: boolean
   pendingWorktrees: PendingWorktreeCreation[]
   pendingRemovals: Record<string, RemovalStage>
   onRetryProjects: () => void
@@ -385,6 +392,7 @@ export function WorkspaceTree({
   activeProject,
   selectedWorktree,
   selectedTerminalId,
+  shortcutsBlocked,
   pendingWorktrees,
   pendingRemovals,
   onRetryProjects,
@@ -611,6 +619,59 @@ export function WorkspaceTree({
       })
     }
   }
+
+  const projectSwitcher = useProjectSwitcher()
+
+  const selectedVisibleTerminals = selectedWorktree
+    ? (terminalTrees.get(selectedWorktree.id)?.visibleTerminals ?? [])
+    : []
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const modifierPressed = usesMacKeyboard
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+
+      const offset =
+        event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+
+      if (
+        !offset ||
+        !modifierPressed ||
+        !event.shiftKey ||
+        event.altKey ||
+        event.isComposing
+      ) {
+        return
+      }
+
+      const count = selectedVisibleTerminals.length
+
+      if (shortcutsBlocked || projectSwitcher.openRef.current || count < 2) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const selectedIndex = selectedVisibleTerminals.findIndex(
+        (terminal) => terminal.id === selectedTerminalId
+      )
+
+      const nextIndex =
+        selectedIndex === -1
+          ? offset === 1
+            ? 0
+            : count - 1
+          : (selectedIndex + offset + count) % count
+
+      selectTerminal(selectedVisibleTerminals[nextIndex]!)
+    }
+
+    document.addEventListener('keydown', keydown, true)
+
+    return () => document.removeEventListener('keydown', keydown, true)
+  })
 
   return (
     <nav
@@ -999,7 +1060,10 @@ export function WorkspaceTree({
                                           ? `Meta+${shortcutIndex}`
                                           : null,
                                         'Alt+Shift+ArrowUp',
-                                        'Alt+Shift+ArrowDown'
+                                        'Alt+Shift+ArrowDown',
+                                        usesMacKeyboard
+                                          ? 'Meta+Shift+ArrowUp Meta+Shift+ArrowDown'
+                                          : 'Control+Shift+ArrowUp Control+Shift+ArrowDown'
                                       ]
                                         .filter(Boolean)
                                         .join(' ')}
