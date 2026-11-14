@@ -88,10 +88,22 @@ function installKeyboardViewport(): void {
         (focused === keyboardHold || focused.closest('.xterm-host') !== null) &&
         viewportReduced
 
+      const bottomAnchoredScrollers = Array.from(
+        appFrame.querySelectorAll<HTMLElement>('.xterm-host .wterm'),
+        (element) => ({
+          element,
+          fromBottom: element.scrollHeight - element.scrollTop
+        })
+      )
+
       if (!keyboardOpen) {
         appFrame.style.removeProperty('--app-frame-height')
         appFrame.style.removeProperty('--app-keyboard-inset')
         appFrame.style.removeProperty('--app-visual-viewport-offset-top')
+
+        for (const { element, fromBottom } of bottomAnchoredScrollers) {
+          element.scrollTop = element.scrollHeight - fromBottom
+        }
 
         return
       }
@@ -111,6 +123,10 @@ function installKeyboardViewport(): void {
         '--app-visual-viewport-offset-top',
         `${viewport.offsetTop}px`
       )
+
+      for (const { element, fromBottom } of bottomAnchoredScrollers) {
+        element.scrollTop = element.scrollHeight - fromBottom
+      }
     })
   }
 
