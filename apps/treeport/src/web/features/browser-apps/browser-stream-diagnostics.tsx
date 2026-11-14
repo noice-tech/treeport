@@ -44,13 +44,15 @@ export function BrowserStreamDiagnostics({
   receiverRef,
   settings,
   canConfigure,
-  onConfigure
+  onConfigure,
+  onOpenProbe
 }: {
   videoRef: RefObject<HTMLVideoElement | null>
   receiverRef: RefObject<RemoteBrowserConnection | null>
   settings: BrowserVideoSettings
   canConfigure: boolean
   onConfigure(settings: BrowserVideoSettings): Promise<void>
+  onOpenProbe(url: string): void
 }) {
   const [sample, setSample] = useState<StreamSample | null>(null)
   const [probe, setProbe] = useState(false)
@@ -525,6 +527,20 @@ export function BrowserStreamDiagnostics({
         One-second samples. Buffering and decoding intervals overlap and should
         not be added.
       </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          setStatus('')
+          setProbe(true)
+          onOpenProbe(
+            new URL('/browser-latency-probe.html', window.location.origin).href
+          )
+        }}
+      >
+        Open latency test page
+      </Button>
       <Button
         type="button"
         variant="outline"

@@ -53,6 +53,26 @@ export type ApiErrorBody = Schema.Schema.Type<typeof apiErrorBodySchema>
 
 export const okResponseSchema = Schema.Struct({ ok: Schema.Literal(true) })
 
+const traceTextSchema = Schema.String.pipe(Schema.maxLength(512))
+
+export const browserTraceBatchSchema = Schema.Struct({
+  session: traceTextSchema,
+  events: Schema.Array(
+    Schema.Struct({
+      timestamp: traceTextSchema,
+      monotonicMs: Schema.Number,
+      event: traceTextSchema,
+      correlationId: traceTextSchema,
+      attributes: Schema.Record({
+        key: traceTextSchema,
+        value: Schema.NullOr(
+          Schema.Union(Schema.Boolean, Schema.Number, traceTextSchema)
+        )
+      })
+    })
+  ).pipe(Schema.maxItems(100))
+})
+
 export const phoneAccessResponseSchema = Schema.Struct({
   url: nullableStringSchema,
   error: nullableStringSchema,

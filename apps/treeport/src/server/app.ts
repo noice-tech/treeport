@@ -40,6 +40,7 @@ import {
 } from '#protocol/presence'
 import {
   apiErrorBodySchema,
+  browserTraceBatchSchema,
   healthResponseSchema,
   phoneAccessResponseSchema,
   uploadedFileResponseSchema,
@@ -153,6 +154,7 @@ import type {
   TreeportService
 } from './core/index.ts'
 import { DomainError } from './core/index.ts'
+import { appendDaemonLog } from './daemon-log.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
 import {
   webAppBrowserOrigin,
@@ -575,6 +577,9 @@ export function createApp({
 
   let updating = false
 
+  const webTracePath = path.join(config.dataDir, 'logs', 'web-trace.jsonl')
+  const webTraceWindow = { startedAt: 0, events: 0, dropped: 0 }
+
   const routes = [
     ...(push
       ? [
@@ -919,6 +924,48 @@ export function createApp({
       })
     ),
 
+    route(
+      'POST',
+      '/api/traces',
+      Effect.gen(function* () {
+        const batch: typeof browserTraceBatchSchema.Type = yield* requestBody(
+          browserTraceBatchSchema
+        )
+
+        const now = Date.now()
+        let output = ''
+
+        if (now - webTraceWindow.startedAt >= 60_000) {
+          if (webTraceWindow.dropped) {
+            output += `${JSON.stringify({ type: 'treeport.browser.trace.dropped', timestamp: new Date(now).toISOString(), events: webTraceWindow.dropped })}\n`
+          }
+
+          webTraceWindow.startedAt = now
+          webTraceWindow.events = 0
+          webTraceWindow.dropped = 0
+        }
+
+        const accepted = batch.events.slice(
+          0,
+          Math.max(0, 1_000 - webTraceWindow.events)
+        )
+
+        webTraceWindow.events += accepted.length
+        webTraceWindow.dropped += batch.events.length - accepted.length
+
+        for (const event of accepted) {
+          output += `${JSON.stringify({ type: 'treeport.browser.trace', service: 'treeport-web', session: batch.session, ...event })}\n`
+        }
+
+        if (output) {
+          yield* operation(() =>
+            appendDaemonLog(webTracePath, output, 2 * 1024 * 1024)
+          )
+        }
+
+        return jsonContractResponse(okResponseSchema, { ok: true })
+      })
+    ),
     route(
       'GET',
       '/api/health',
