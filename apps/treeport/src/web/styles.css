@@ -108,6 +108,24 @@
   border-color: transparent;
 }
 
+/* The software keyboard pushes the terminal up behind the header instead of
+   shrinking it, so the grid keeps its size and the program does not reflow.
+   The grid's matching top margin keeps its first rows reachable by scrolling. */
+.xterm-host {
+  --terminal-keyboard-shift: max(
+    0px,
+    calc(
+      var(--app-keyboard-inset, env(safe-area-inset-bottom, 0px)) -
+        env(safe-area-inset-bottom, 0px)
+    )
+  );
+  top: calc(-1 * var(--terminal-keyboard-shift));
+}
+
+.xterm-host .term-grid {
+  margin-top: var(--terminal-keyboard-shift);
+}
+
 .xterm-host .wterm {
   --term-font-family:
     'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;

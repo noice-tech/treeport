@@ -88,10 +88,24 @@ function installKeyboardViewport(): void {
         (focused === keyboardHold || focused.closest('.xterm-host') !== null) &&
         viewportReduced
 
+      // The keyboard shift changes each terminal's scroll height. Keep the same
+      // distance from the bottom so the prompt moves up with the keyboard.
+      const scrollers = Array.from(
+        appFrame.querySelectorAll<HTMLElement>('.xterm-host .wterm'),
+        (element) => ({
+          element,
+          fromBottom: element.scrollHeight - element.scrollTop
+        })
+      )
+
       if (!keyboardOpen) {
         appFrame.style.removeProperty('--app-frame-height')
         appFrame.style.removeProperty('--app-keyboard-inset')
         appFrame.style.removeProperty('--app-visual-viewport-offset-top')
+
+        for (const { element, fromBottom } of scrollers) {
+          element.scrollTop = element.scrollHeight - fromBottom
+        }
 
         return
       }
@@ -111,6 +125,10 @@ function installKeyboardViewport(): void {
         '--app-visual-viewport-offset-top',
         `${viewport.offsetTop}px`
       )
+
+      for (const { element, fromBottom } of scrollers) {
+        element.scrollTop = element.scrollHeight - fromBottom
+      }
     })
   }
 
