@@ -2983,6 +2983,7 @@ export function BrowserAppWorkspace({
               remoteConnectionRef.current?.configureVideo(settings) ??
               Promise.reject(new Error('Browser stream is not connected.'))
             }
+            onOpenProbe={navigate}
           />
         ) : null}
       </div>
