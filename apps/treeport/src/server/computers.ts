@@ -60,7 +60,7 @@ export class ComputerDirectory {
     remoteUrl: string | null
     fallbackName: string
   }): Promise<ComputerDirectory> {
-    const filename = path.join(options.dataDir, 'computers.json')
+    const filename = path.join(options.dataDir, 'computer-directory.json')
 
     const saved = await fs
       .readFile(filename, 'utf8')
