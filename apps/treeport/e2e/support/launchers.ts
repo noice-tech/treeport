@@ -10,6 +10,7 @@ export async function createLauncherMock(page: Page) {
       args: ['--yes', 'hunkdiff@0.17.3', 'diff', 'HEAD', '--watch'],
       closeOnSuccess: false,
       treeTitle: null,
+      color: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
     },
@@ -20,6 +21,7 @@ export async function createLauncherMock(page: Page) {
       args: ['${prompt}'],
       closeOnSuccess: false,
       treeTitle: null,
+      color: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
     }

@@ -122,6 +122,7 @@ export class LauncherService {
             env: {},
             closeOnSuccess: launcher.closeOnSuccess,
             treeTitle: launcher.treeTitle,
+            color: launcher.color,
             source: { type: 'user' as const }
           })),
           ...globalPackageLaunchers
@@ -136,7 +137,7 @@ export class LauncherService {
 
   createLauncher(
     input: Pick<Launcher, 'name' | 'executable' | 'args'> &
-      Partial<Pick<Launcher, 'closeOnSuccess' | 'treeTitle'>>
+      Partial<Pick<Launcher, 'closeOnSuccess' | 'treeTitle' | 'color'>>
   ): Effect.Effect<Launcher, never, ApplicationServices> {
     return Effect.gen(function* () {
       const database = yield* DatabasePort
@@ -149,6 +150,7 @@ export class LauncherService {
         args: [...input.args],
         closeOnSuccess: input.closeOnSuccess ?? false,
         treeTitle: input.treeTitle ?? null,
+        color: input.color ?? null,
         createdAt: timestamp,
         updatedAt: timestamp
       }
@@ -164,6 +166,7 @@ export class LauncherService {
             treeTitleJson: launcher.treeTitle
               ? JSON.stringify(launcher.treeTitle)
               : null,
+            color: launcher.color,
             createdAt: launcher.createdAt,
             updatedAt: launcher.updatedAt
           })
@@ -179,6 +182,7 @@ export class LauncherService {
     input: Pick<Launcher, 'name' | 'executable' | 'args'> & {
       closeOnSuccess?: boolean | undefined
       treeTitle?: Launcher['treeTitle'] | undefined
+      color?: Launcher['color'] | undefined
     },
     expectedUpdatedAt: string
   ): Effect.Effect<Launcher, DomainError<unknown>, ApplicationServices> {
@@ -223,6 +227,7 @@ export class LauncherService {
         closeOnSuccess: input.closeOnSuccess ?? existing.closeOnSuccess,
         treeTitle:
           input.treeTitle === undefined ? existing.treeTitle : input.treeTitle,
+        color: input.color === undefined ? existing.color : input.color,
         updatedAt:
           timestamp > existing.updatedAt
             ? timestamp
@@ -241,6 +246,7 @@ export class LauncherService {
               treeTitleJson: launcher.treeTitle
                 ? JSON.stringify(launcher.treeTitle)
                 : null,
+              color: launcher.color,
               updatedAt: launcher.updatedAt
             })
             .where(

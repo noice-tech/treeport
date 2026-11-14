@@ -381,7 +381,7 @@ export function NewAppDialog({
                     }}
                   >
                     <CommandLineIcon
-                      className="size-4 shrink-0 fill-zinc-400"
+                      className="size-4 shrink-0 fill-accent-400"
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1 truncate text-left">
@@ -408,7 +408,10 @@ export function NewAppDialog({
                       onCreateBrowserApp()
                     }}
                   >
-                    <GlobeAltIcon aria-hidden="true" />
+                    <GlobeAltIcon
+                      className="size-4 shrink-0 fill-accent-400"
+                      aria-hidden="true"
+                    />
                     <span className="min-w-0 flex-1 truncate text-left">
                       Browser
                     </span>
@@ -452,7 +455,7 @@ export function NewAppDialog({
                     >
                       <WebAppIcon
                         icon={definition.icon}
-                        className="fill-zinc-400"
+                        className="fill-zinc-300"
                       />
                       <span className="min-w-0 flex-1 truncate text-left">
                         {definition.title}
@@ -532,7 +535,10 @@ export function NewAppDialog({
                       }}
                     >
                       <CommandLineIcon
-                        className="size-4 shrink-0 fill-zinc-400"
+                        className="size-4 shrink-0 fill-zinc-300"
+                        style={
+                          launcher.color ? { fill: launcher.color } : undefined
+                        }
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate text-left">
@@ -582,7 +588,7 @@ export function NewAppDialog({
               <Button
                 type="button"
                 variant="ghost"
-                className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal text-zinc-400 hover:bg-white/8 hover:text-zinc-100 sm:h-9 sm:text-sm"
+                className="h-12 w-full justify-start gap-3 rounded-lg py-2 pr-3 pl-2 text-base font-normal group/manage text-zinc-400 hover:bg-white/8 hover:text-zinc-100 sm:h-9 sm:text-sm"
                 onClick={() => {
                   setQuery('')
                   setSelectedIndex(0)
@@ -590,7 +596,7 @@ export function NewAppDialog({
                 }}
               >
                 <Cog6ToothIcon
-                  className="size-4 shrink-0 fill-zinc-500"
+                  className="size-4 shrink-0 fill-zinc-400 transition-colors group-hover/manage:fill-zinc-100"
                   aria-hidden="true"
                 />
                 <span>Manage launchers</span>

@@ -633,6 +633,7 @@ export function mapLauncher(row: LauncherRow): Launcher {
     treeTitle: row.treeTitleJson
       ? (JSON.parse(row.treeTitleJson) as LauncherCommand)
       : null,
+    color: row.color,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }

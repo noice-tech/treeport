@@ -1200,6 +1200,7 @@ export class PackageSystem {
           executable: result.executable,
           args: [...result.args],
           treeTitle: result.treeTitle,
+          color: result.color,
           shellCommand: null,
           cwd: null,
           env: {},

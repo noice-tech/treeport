@@ -54,6 +54,7 @@ it('reads launchers from the current tree settings alongside other sections', as
       env: {},
       closeOnSuccess: true,
       treeTitle: null,
+      color: null,
       source: { type: 'repository', format: 'treeport' }
     }
   ])

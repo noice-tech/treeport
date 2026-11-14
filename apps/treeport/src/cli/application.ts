@@ -2779,6 +2779,7 @@ async function main(args: string[]): Promise<void> {
       '--close-on-success',
       'close the terminal when its command succeeds'
     )
+    .option('--color <hex>', 'icon color as #rrggbb')
     .option('--json', 'emit machine-readable JSON')
     .addHelpText(
       'after',
@@ -2791,6 +2792,7 @@ async function main(args: string[]): Promise<void> {
       repo?: boolean
       closeOnSuccess?: boolean
       treeTitle?: string
+      color?: string
     }>()
 
     if (!argv) {
@@ -2824,11 +2826,12 @@ async function main(args: string[]): Promise<void> {
       closeOnSuccess: Boolean(options.closeOnSuccess),
       treeTitle: treeTitleArgv
         ? { executable: treeTitleExecutable, args: treeTitleArgs }
-        : null
+        : null,
+      color: options.color ?? null
     })
 
     if (!launcher) {
-      throw new CliError('Invalid launcher name or command', 2)
+      throw new CliError('Invalid launcher name, command, or color', 2)
     }
 
     if (!options.repo) {

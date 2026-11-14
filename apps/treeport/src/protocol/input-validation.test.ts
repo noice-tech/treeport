@@ -179,7 +179,8 @@ describe('API input validation', () => {
       ...input,
       name: 'Hunk review',
       closeOnSuccess: false,
-      treeTitle: null
+      treeTitle: null,
+      color: null
     }
 
     expect(createLauncherSchema.parse(input)).toEqual(expected)
