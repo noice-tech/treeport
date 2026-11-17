@@ -133,7 +133,7 @@ export function FilePasteTextarea({
           rows={rows}
           placeholder={placeholder}
           className={cn(
-            'block max-h-60 field-sizing-content resize-none transition-none',
+            'block max-h-60 field-sizing-content resize-none wrap-anywhere transition-none',
             fileDragOver &&
               'text-transparent ring-0 focus-visible:ring-0 outline-2 outline-dashed outline-offset-0 outline-accent-400 placeholder:text-transparent',
             className
