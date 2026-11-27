@@ -3,6 +3,7 @@ import * as Schema from 'effect/Schema'
 import * as Either from 'effect/Either'
 
 export const SOCKET_PATH = '/api/socket'
+export const SOCKET_HEARTBEAT_INTERVAL_MS = 5_000
 export const TERMINAL_PROTOCOL_VERSION = 11
 export const TERMINAL_CONTROLLER_GRACE_MS = 10_000
 export const TERMINAL_OUTPUT_HIGH_WATERMARK = 256 * 1024

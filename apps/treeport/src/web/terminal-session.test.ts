@@ -1538,11 +1538,14 @@ describe('TerminalSession', () => {
       cols: 1_000,
       rows: 45
     })
-    session.sendText('blocked during resize')
-    expect(socket.volatile.emit).not.toHaveBeenCalled()
-    expect(
-      terminalSessionTestAccess(session).services.connection.canInput()
-    ).toBe(false)
+    Object.assign(terminalSessionTestAccess(session).state, {
+      queryAuthorityActive: true
+    })
+    session.sendText('typed during resize')
+    expect(socket.volatile.emit).toHaveBeenCalledWith('input', {
+      generation: 4,
+      data: 'typed during resize'
+    })
     expect(resize).not.toHaveBeenCalled()
     session.dispose()
   })

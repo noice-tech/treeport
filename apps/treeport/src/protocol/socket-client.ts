@@ -1,11 +1,15 @@
 import * as Schema from 'effect/Schema'
 import type * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
+import * as Schedule from 'effect/Schedule'
 import * as Effect from 'effect/Effect'
 import * as Socket from '@effect/platform/Socket'
 import * as Layer from 'effect/Layer'
 import * as FiberId from 'effect/FiberId'
-import { SOCKET_PATH } from './terminal-session.ts'
+import {
+  SOCKET_HEARTBEAT_INTERVAL_MS,
+  SOCKET_PATH
+} from './terminal-session.ts'
 import { parseSocketMessage } from './socket.ts'
 import { decodeUnknownOrNull } from './schema.ts'
 
@@ -23,6 +27,8 @@ type ProtocolAuthValue =
   | null
   | readonly ProtocolAuthValue[]
   | { readonly [key: string]: ProtocolAuthValue }
+
+const DEAD_LINK_SILENT_HEARTBEAT_INTERVALS = 3
 
 const connectErrorPayloadSchema = Schema.Struct({ message: Schema.String })
 
@@ -215,8 +221,31 @@ class EffectProtocolSocket<
         yield* Effect.forkScoped(
           Effect.forever(Queue.take(outgoing).pipe(Effect.flatMap(write)))
         )
+        let serverSendsHeartbeats = false
+        let receivedSinceLastCheck = false
+        let silentHeartbeatIntervals = 0
+        yield* Effect.forkScoped(
+          Effect.repeat(
+            Effect.sync(() => {
+              silentHeartbeatIntervals = receivedSinceLastCheck
+                ? 0
+                : silentHeartbeatIntervals + 1
+              receivedSinceLastCheck = false
+
+              if (
+                serverSendsHeartbeats &&
+                silentHeartbeatIntervals >= DEAD_LINK_SILENT_HEARTBEAT_INTERVALS
+              ) {
+                this.abortTransport()
+              }
+            }),
+            Schedule.spaced(SOCKET_HEARTBEAT_INTERVAL_MS)
+          )
+        )
         yield* socket.runRaw(
           (data) => {
+            receivedSinceLastCheck = true
+
             if (data instanceof Uint8Array) {
               this.abortTransport()
 
@@ -243,6 +272,12 @@ class EffectProtocolSocket<
 
             if (message.event === 'connected') {
               this.transition('connected')
+
+              return
+            }
+
+            if (message.event === 'ping') {
+              serverSendsHeartbeats = true
 
               return
             }

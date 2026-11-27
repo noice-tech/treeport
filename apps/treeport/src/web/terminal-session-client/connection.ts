@@ -17,6 +17,9 @@ import {
   normalizeTerminalDimensions
 } from './state'
 
+const TERMINAL_MAX_UNACKNOWLEDGED_INPUT_MESSAGES = 64
+const TERMINAL_MAX_UNACKNOWLEDGED_INPUT_FULL_CHUNKS = 4
+
 let fallbackClientId: string | null = null
 
 function getClientId(): string {
@@ -73,8 +76,6 @@ interface Dependencies {
 export function makeConnection(
   state: Pick<
     TerminalSessionState,
-    | 'appliedRevision'
-    | 'canonicalRevision'
     | 'controlRequestGeneration'
     | 'controllerGeneration'
     | 'disposed'
@@ -86,7 +87,6 @@ export function makeConnection(
     | 'ready'
     | 'reconnectAllowed'
     | 'renderEpoch'
-    | 'resizePending'
     | 'selectionDragCancel'
     | 'snapshotValue'
     | 'socket'
@@ -102,10 +102,14 @@ export function makeConnection(
       event: 'input' | 'binary'
       generation: number
       data: string
-      offset: number
     }> = []
 
-    let inputInFlight: { generation: number; end: number } | null = null
+    const unacknowledgedInputChunks: Array<{
+      generation: number
+      length: number
+    }> = []
+
+    let unacknowledgedInputLength = 0
 
     const chunkLength = Math.min(
       Math.floor(TERMINAL_MAX_INPUT_BYTES / 3),
@@ -113,9 +117,14 @@ export function makeConnection(
     )
 
     function cancelInput(): void {
-      const interrupted = inputQueue.length > 0 || !!state.pendingPaste
+      const interrupted =
+        inputQueue.length > 0 ||
+        unacknowledgedInputChunks.length > 0 ||
+        !!state.pendingPaste
+
       inputQueue.length = 0
-      inputInFlight = null
+      unacknowledgedInputChunks.length = 0
+      unacknowledgedInputLength = 0
       state.pendingPaste = ''
 
       if (interrupted && !state.disposed) {
@@ -140,51 +149,55 @@ export function makeConnection(
         }
       }
 
-      const input = inputQueue[0]
-
-      if (!input || inputInFlight) {
-        return
-      }
-
-      if (input.generation !== state.controllerGeneration) {
-        cancelInput()
-
-        return
-      }
-
-      let end = Math.min(input.offset + chunkLength, input.data.length)
-
-      if (
-        input.event === 'input' &&
-        end < input.data.length &&
-        input.data.charCodeAt(end - 1) >= 0xd800 &&
-        input.data.charCodeAt(end - 1) <= 0xdbff &&
-        input.data.charCodeAt(end) >= 0xdc00 &&
-        input.data.charCodeAt(end) <= 0xdfff
+      while (
+        inputQueue.length > 0 &&
+        unacknowledgedInputChunks.length <
+          TERMINAL_MAX_UNACKNOWLEDGED_INPUT_MESSAGES &&
+        unacknowledgedInputLength <
+          chunkLength * TERMINAL_MAX_UNACKNOWLEDGED_INPUT_FULL_CHUNKS
       ) {
-        end -= 1
-      }
+        const input = inputQueue[0]!
 
-      inputInFlight = { generation: input.generation, end }
-      state.socket.volatile.emit(input.event, {
-        generation: input.generation,
-        data: input.data.slice(input.offset, end)
-      })
+        if (input.generation !== state.controllerGeneration) {
+          cancelInput()
+
+          return
+        }
+
+        const splitsSurrogatePair =
+          input.event === 'input' &&
+          chunkLength < input.data.length &&
+          /[\ud800-\udbff]/.test(input.data[chunkLength - 1]!)
+
+        const data = input.data.slice(
+          0,
+          splitsSurrogatePair ? chunkLength - 1 : chunkLength
+        )
+
+        if (data.length === input.data.length) {
+          inputQueue.shift()
+        } else {
+          input.data = input.data.slice(data.length)
+        }
+
+        unacknowledgedInputChunks.push({
+          generation: input.generation,
+          length: data.length
+        })
+        unacknowledgedInputLength += data.length
+        state.socket.volatile.emit(input.event, {
+          generation: input.generation,
+          data
+        })
+      }
     }
 
     function acknowledgeInput(generation: number): void {
-      if (inputInFlight?.generation !== generation) {
+      if (unacknowledgedInputChunks[0]?.generation !== generation) {
         return
       }
 
-      const input = inputQueue[0]!
-      input.offset = inputInFlight.end
-
-      if (input.offset === input.data.length) {
-        inputQueue.shift()
-      }
-
-      inputInFlight = null
+      unacknowledgedInputLength -= unacknowledgedInputChunks.shift()!.length
       flushInput()
     }
 
@@ -354,9 +367,7 @@ export function makeConnection(
       return (
         state.ready &&
         state.snapshotValue.controller &&
-        state.queryAuthorityActive &&
-        !state.resizePending &&
-        state.appliedRevision === state.canonicalRevision
+        state.queryAuthorityActive
       )
     }
 
@@ -376,7 +387,14 @@ export function makeConnection(
           return
         }
 
-        inputQueue.push({ event, ...input, offset: 0 })
+        const last = inputQueue.at(-1)
+
+        if (last?.event === event && last.generation === input.generation) {
+          last.data += input.data
+        } else {
+          inputQueue.push({ event, ...input })
+        }
+
         dependencies.update({ inputError: null })
         flushInput()
 

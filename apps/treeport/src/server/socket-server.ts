@@ -18,6 +18,7 @@ import { parseSocketHandshake, parseSocketMessage } from '#protocol/socket'
 import {
   parseTerminalAuth,
   parseTerminalClientEvent,
+  SOCKET_HEARTBEAT_INTERVAL_MS,
   SOCKET_PATH,
   TERMINAL_MAX_CLIENT_MESSAGE_BYTES,
   TERMINAL_PROTOCOL_VERSION,
@@ -29,6 +30,7 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
+import * as Schedule from 'effect/Schedule'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { AppConfig, TreeportService } from './core/index.ts'
 import type { ApplicationServices } from './core/services/infrastructure/application-runtime.ts'
@@ -205,9 +207,17 @@ export function createSocketServer({
           socket.runRaw((message) => Queue.offer(incoming, message))
         )
 
+        const heartbeat = JSON.stringify({ event: 'ping', payload: null })
+
         const writer = Effect.zipRight(
           write(JSON.stringify({ event: 'connected', payload: null })),
-          Effect.forever(Effect.flatMap(Queue.take(outgoing), write))
+          Effect.raceFirst(
+            Effect.forever(Effect.flatMap(Queue.take(outgoing), write)),
+            Effect.repeat(
+              Effect.sync(() => Queue.unsafeOffer(outgoing, heartbeat)),
+              Schedule.spaced(SOCKET_HEARTBEAT_INTERVAL_MS)
+            )
+          )
         )
 
         const send = (
