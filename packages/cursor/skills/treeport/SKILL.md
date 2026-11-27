@@ -66,9 +66,11 @@ treeport browser console
 treeport browser network
 treeport browser run 'return await page.title()'
 treeport browser screenshot
+treeport browser viewport 390 844
+treeport browser viewport reset
 ```
 
-Use snapshot element references, and take a fresh snapshot after navigation. When multiple tabs are open, specify `--app <app-id>`.
+Use snapshot element references, and take a fresh snapshot after navigation. Change the page size only with `treeport browser viewport`; a size set inside `browser run` is reverted when the script ends. When multiple tabs are open, specify `--app <app-id>`.
 
 Keep tabs open for user inspection. Check `treeport browser status` if the runtime is unavailable, and ask permission before installing a browser runtime. Never attach a personal browser profile or put secrets in URLs.
 

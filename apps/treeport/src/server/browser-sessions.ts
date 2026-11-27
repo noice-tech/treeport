@@ -3956,7 +3956,29 @@ export class BrowserSessionManager {
         }
       }
 
-      if (localOwner) {
+      if (input.command === 'viewport') {
+        if (!browser) {
+          throw new Error(
+            'This Browser is open in a Treeport desktop app. Use its Responsive mode to change the viewport.'
+          )
+        }
+
+        if (input.args) {
+          await this.cancelTouches(session)
+          await browser.command({ type: 'resize', ...input.args })
+        }
+
+        for (const attachment of session.attachments.values()) {
+          attachment.transport.sendMessage({
+            type: 'viewportOverride',
+            viewport: input.args
+          })
+        }
+
+        result = input.args
+          ? `Viewport set to ${input.args.width}x${input.args.height}`
+          : 'Viewport reset to the viewer’s pane size'
+      } else if (localOwner) {
         result = await this.executeLocalAgentCommand(session, localOwner, input)
       } else {
         result = await browser!.agentCommand(input)

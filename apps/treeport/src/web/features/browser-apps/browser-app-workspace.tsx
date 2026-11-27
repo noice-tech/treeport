@@ -571,6 +571,48 @@ export function BrowserAppWorkspace({
     window.requestAnimationFrame(focusPage)
   }
 
+  const resizeViewport = (
+    size: { width: number; height: number } | null,
+    preset: z.infer<typeof viewportSettingsSchema>['preset'] = 'responsive',
+    takeControl = true
+  ) => {
+    const settings = { viewport: size, preset }
+    setViewportSettings(settings)
+
+    try {
+      sessionStorage.setItem(
+        `treeport-browser-viewport:${app.id}`,
+        JSON.stringify(settings)
+      )
+    } catch {}
+
+    const needsControl = takeControl && !stateRef.current?.controlled
+    viewportOverrideRef.current = size
+
+    if (needsControl) {
+      send({ type: 'takeControl' })
+    }
+
+    if (size) {
+      setViewportWidth(String(size.width))
+      setViewportHeight(String(size.height))
+
+      if (!localBrowser) {
+        send({ type: 'resize', ...size })
+      }
+    } else {
+      const bounds = videoRef.current?.getBoundingClientRect()
+
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        send({
+          type: 'resize',
+          width: Math.max(1, Math.min(3_840, Math.round(bounds.width))),
+          height: Math.max(1, Math.min(2_160, Math.round(bounds.height)))
+        })
+      }
+    }
+  }
+
   const receiveMessage = (message: BrowserServerMessage) => {
     if (
       message.type === 'videoReady' ||
@@ -780,6 +822,12 @@ export function BrowserAppWorkspace({
           })
           .catch(() => setError('Could not open remote DevTools.'))
       }
+
+      return
+    }
+
+    if (message.type === 'viewportOverride') {
+      resizeViewport(message.viewport, 'responsive', false)
 
       return
     }
@@ -1332,47 +1380,6 @@ export function BrowserAppWorkspace({
     send({ type: 'takeControl' })
     send({ type: 'navigate', url: targetUrl })
     focusPage()
-  }
-
-  const resizeViewport = (
-    size: { width: number; height: number } | null,
-    preset: z.infer<typeof viewportSettingsSchema>['preset'] = 'responsive'
-  ) => {
-    const settings = { viewport: size, preset }
-    setViewportSettings(settings)
-
-    try {
-      sessionStorage.setItem(
-        `treeport-browser-viewport:${app.id}`,
-        JSON.stringify(settings)
-      )
-    } catch {}
-
-    const needsControl = !stateRef.current?.controlled
-    viewportOverrideRef.current = size
-
-    if (needsControl) {
-      send({ type: 'takeControl' })
-    }
-
-    if (size) {
-      setViewportWidth(String(size.width))
-      setViewportHeight(String(size.height))
-
-      if (!localBrowser) {
-        send({ type: 'resize', ...size })
-      }
-    } else {
-      const bounds = videoRef.current?.getBoundingClientRect()
-
-      if (bounds && bounds.width > 0 && bounds.height > 0) {
-        send({
-          type: 'resize',
-          width: Math.max(1, Math.min(3_840, Math.round(bounds.width))),
-          height: Math.max(1, Math.min(2_160, Math.round(bounds.height)))
-        })
-      }
-    }
   }
 
   const point = (event: {

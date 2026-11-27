@@ -929,21 +929,55 @@ export class PlaywrightBrowser {
             .evaluateHandle(() => {
               interface CapturedContextMenu {
                 event: MouseEvent | null
+                prevented: boolean
+                settled: boolean
                 linkUrl: string | null
                 hasSelection: boolean
                 listener: (event: MouseEvent) => void
+                suppress: (event: MouseEvent) => void
               }
 
               const captured: CapturedContextMenu = {
                 event: null,
+                prevented: false,
+                settled: false,
                 linkUrl: null,
                 hasSelection: false,
+                // EXTERNAL: Headful Chromium opens its own menu as a popup window
+                // that takes the display's pointer, so native scrolls stop
+                // reaching the page, and CDP input cannot close it. Cancel the
+                // event once the page's listeners have had their say.
+                suppress: (event: MouseEvent) => {
+                  if (event !== captured.event || captured.settled) {
+                    return
+                  }
+
+                  captured.settled = true
+                  captured.prevented = event.defaultPrevented
+                  event.preventDefault()
+                },
                 listener: (event: MouseEvent) => {
                   if (!event.isTrusted) {
                     return
                   }
 
                   captured.event = event
+                  captured.settled = false
+
+                  // EXTERNAL: A page that stops propagation keeps the event from the
+                  // bubble listener. Microtasks run between listeners, while the
+                  // event can still be cancelled.
+                  for (const name of [
+                    'stopPropagation',
+                    'stopImmediatePropagation'
+                  ] as const) {
+                    const stop = event[name].bind(event)
+
+                    event[name] = () => {
+                      stop()
+                      queueMicrotask(() => captured.suppress(event))
+                    }
+                  }
 
                   // EXTERNAL: Document selections exclude text selected inside
                   // inputs and textareas, so check the focused field as well.
@@ -970,6 +1004,7 @@ export class PlaywrightBrowser {
               window.addEventListener('contextmenu', captured.listener, {
                 capture: true
               })
+              window.addEventListener('contextmenu', captured.suppress)
 
               return captured
             })
@@ -1009,7 +1044,7 @@ export class PlaywrightBrowser {
             .evaluate((observed) =>
               observed.event
                 ? {
-                    prevented: observed.event.defaultPrevented,
+                    prevented: observed.prevented,
                     linkUrl: observed.linkUrl,
                     hasSelection: observed.hasSelection,
                     x: observed.event.clientX,
@@ -1064,6 +1099,7 @@ export class PlaywrightBrowser {
                 window.removeEventListener('contextmenu', observed.listener, {
                   capture: true
                 })
+                window.removeEventListener('contextmenu', observed.suppress)
               })
               .catch(() => undefined)
             await entry?.observer.dispose().catch(() => undefined)
@@ -1338,7 +1374,10 @@ export class PlaywrightBrowser {
   }
 
   async agentCommand(
-    input: Exclude<BrowserAgentCommand, { command: `dialog-${string}` }>
+    input: Exclude<
+      BrowserAgentCommand,
+      { command: `dialog-${string}` | 'viewport' }
+    >
   ): Promise<string> {
     this.pointerPoint = null
     const page = this.page
@@ -1426,6 +1465,19 @@ export class PlaywrightBrowser {
       await interact(async () => {
         output = await runBrowserScript(page, input.args[0])
       })
+
+      // EXTERNAL: A script that resizes its page bypasses the session: the stream and
+      // the viewers' pointer mapping keep the old size, and a viewer's resize
+      // to that size is skipped as unchanged.
+      const viewport = page.viewportSize()
+
+      if (
+        viewport?.width !== this.stateValue.viewport.width ||
+        viewport.height !== this.stateValue.viewport.height
+      ) {
+        await page.setViewportSize(this.stateValue.viewport)
+      }
+
       await this.refreshPageState()
 
       return output
