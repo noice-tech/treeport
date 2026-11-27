@@ -229,9 +229,13 @@ treeport browser console
 treeport browser network
 treeport browser run 'return await page.title()'
 treeport browser screenshot
+treeport browser viewport 390 844
+treeport browser viewport reset
 ```
 
 The commands select the only browser tab in the current tree.
+
+Change the page size only with `treeport browser viewport`. A size set inside `browser run` is reverted when the script ends.
 
 When more than one browser tab exists, add `--app <app-id>`.
 

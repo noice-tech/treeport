@@ -113,6 +113,11 @@ const browserWheelFields = {
   deltaY: Schema.Finite.pipe(Schema.between(-10_000, 10_000))
 }
 
+const browserViewportSchema = Schema.Struct({
+  width: Schema.Int.pipe(Schema.between(1, 3_840)),
+  height: Schema.Int.pipe(Schema.between(1, 2_160))
+})
+
 const browserClientMessageSchema = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('setVideoSettings'),
@@ -195,8 +200,7 @@ const browserClientMessageSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('stop') }),
   Schema.Struct({
     type: Schema.Literal('resize'),
-    width: Schema.Int.pipe(Schema.between(1, 3_840)),
-    height: Schema.Int.pipe(Schema.between(1, 2_160))
+    ...browserViewportSchema.fields
   }),
   Schema.Struct({
     type: Schema.Literal('pointer'),
@@ -523,6 +527,10 @@ const browserServerMessageSchema = Schema.Union(
     message: Schema.String
   }),
   Schema.Struct({
+    type: Schema.Literal('viewportOverride'),
+    viewport: Schema.NullOr(browserViewportSchema)
+  }),
+  Schema.Struct({
     type: Schema.Literal('browserUnavailable'),
     message: Schema.String,
     setup: Schema.NullOr(
@@ -630,6 +638,10 @@ export const browserAgentCommandSchema = Schema.Union(
   Schema.Struct({
     command: Schema.Literal('screenshot'),
     args: Schema.Tuple()
+  }),
+  Schema.Struct({
+    command: Schema.Literal('viewport'),
+    args: Schema.NullOr(browserViewportSchema)
   }),
   Schema.Struct({
     command: Schema.Literal('goto'),

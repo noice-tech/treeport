@@ -628,7 +628,7 @@ async function resolveBrowserApp(
 
 async function runBrowserAgentCommand(
   command: string,
-  args: string[],
+  args: string[] | { width: number; height: number } | null,
   appId?: string
 ): Promise<{ appId: string; output: string }> {
   const { app } = await resolveBrowserApp(appId)
@@ -1600,7 +1600,7 @@ async function main(args: string[]): Promise<void> {
 
   const printAgentResult = async (
     command: string,
-    args: string[],
+    args: Parameters<typeof runBrowserAgentCommand>[1],
     appId?: string
   ) => {
     const result = await runBrowserAgentCommand(command, args, appId)
@@ -1750,6 +1750,44 @@ async function main(args: string[]): Promise<void> {
       browserDialogAcceptCommand.opts<{ app?: string }>().app
     )
   )
+
+  const browserViewportCommand = browserCommand
+    .command('viewport')
+    .description(
+      'Set the page viewport as the viewer’s Responsive mode, or reset it'
+    )
+    .argument('<width>', 'width in CSS pixels, or "reset"')
+    .argument('[height]', 'height in CSS pixels')
+    .option('--app <app-id>', 'Browser ID')
+    .option('--json', 'emit machine-readable JSON')
+
+  browserViewportCommand.action(async (width: string, height?: string) => {
+    const reset = width === 'reset' && height === undefined
+    const size = { width: Number(width), height: Number(height) }
+
+    if (
+      !reset &&
+      !(
+        Number.isInteger(size.width) &&
+        Number.isInteger(size.height) &&
+        size.width >= 1 &&
+        size.width <= 3_840 &&
+        size.height >= 1 &&
+        size.height <= 2_160
+      )
+    ) {
+      throw new CliError(
+        'Provide a width up to 3840 and a height up to 2160, or "reset".',
+        2
+      )
+    }
+
+    await printAgentResult(
+      'viewport',
+      reset ? null : size,
+      browserViewportCommand.opts<{ app?: string }>().app
+    )
+  })
 
   for (const [name, description, agentName] of [
     ['dialog-dismiss', 'Dismiss the open page dialog', 'dialog-dismiss'],
