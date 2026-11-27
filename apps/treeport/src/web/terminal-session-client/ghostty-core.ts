@@ -382,24 +382,38 @@ export class GhosttyTerminalCore implements TerminalCore {
             graphemes: (x) => {
               vt.call('ghostty_render_state_row_cells_select', session.cells, x)
 
-              const cellsData = (name: string, out: number) =>
-                vt.call(
-                  'ghostty_render_state_row_cells_get',
-                  session.cells,
-                  vt.value('GhosttyRenderStateRowCellsData', name),
-                  out
-                )
+              // EXTERNAL: GRAPHEMES_BUF takes a GhosttyCodepointBuffer that
+              // points at the codepoint storage, not the storage itself.
+              const buffer = vt.view()
 
-              cellsData('GRAPHEMES_LEN', session.out)
-              const length = vt.view().getUint32(session.out, true)
+              const length =
+                session.out + vt.offset('GhosttyCodepointBuffer', 'len')
 
-              if (length * 4 > TEXT_BYTES) {
-                return undefined
-              }
+              buffer.setUint32(
+                session.out + vt.offset('GhosttyCodepointBuffer', 'ptr'),
+                session.text,
+                true
+              )
+              buffer.setUint32(
+                session.out + vt.offset('GhosttyCodepointBuffer', 'cap'),
+                TEXT_BYTES / 4,
+                true
+              )
+              buffer.setUint32(length, 0, true)
 
-              cellsData('GRAPHEMES_BUF', session.text)
+              const result = vt.call(
+                'ghostty_render_state_row_cells_get',
+                session.cells,
+                vt.value('GhosttyRenderStateRowCellsData', 'GRAPHEMES_BUF'),
+                session.out
+              )
 
-              return this.codepoints(session.text, length)
+              return result === 0
+                ? this.codepoints(
+                    session.text,
+                    vt.view().getUint32(length, true)
+                  )
+                : undefined
             },
             link: (x) => {
               this.writePoint(session.point, 'VIEWPORT', x, y)
